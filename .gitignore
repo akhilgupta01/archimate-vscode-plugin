@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.vsix
+.DS_Store
+preview/webview.js
+preview/webview.js.map
+preview/webview.css
+preview/assets/

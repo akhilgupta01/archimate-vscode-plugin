@@ -1,0 +1,78 @@
+{
+  "name": "archimate-diagrams",
+  "displayName": "ArchiMate Diagrams",
+  "description": "Design ArchiMate diagrams — with automatic orthogonal connector routing, drag-to-reposition, resize, alignment guides, and multi-select — right inside VS Code.",
+  "version": "0.1.0",
+  "publisher": "local-dev",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "archimate",
+    "diagram",
+    "enterprise-architecture",
+    "orthogonal-routing"
+  ],
+  "activationEvents": [
+    "onCommand:archimate.openDesigner",
+    "onCommand:archimate.openFile",
+    "onCommand:archimate.openSettings"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "archimate.openDesigner",
+        "title": "ArchiMate: Open Designer"
+      },
+      {
+        "command": "archimate.openFile",
+        "title": "Open in Archimate Editor"
+      },
+      {
+        "command": "archimate.openSettings",
+        "title": "ArchiMate: Open Settings"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "archimate.openFile",
+          "when": "resourceExtname == .json",
+          "group": "navigation@20"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ArchiMate Diagrams",
+      "properties": {
+        "archimate.workDir": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Directory where ArchiMate views and folders are stored as real files. Empty means ~/.archi/work."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "npm run typecheck && npm run compile",
+    "package": "vsce package",
+    "dev:preview": "python3 -m http.server 8080"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.4.0"
+  }
+}

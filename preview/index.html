@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ArchiMate Designer — dev preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!--
+  Local UI development harness — NOT part of the extension. Loads the same
+  dist/webview.js bundle the real VS Code webview uses, but without VS Code:
+  main.ts detects there's no acquireVsCodeApi() and falls back to
+  LocalStorageAdapter, so views persist to this browser's localStorage
+  instead of real files. Run `npm run compile` (or `watch`) then
+  `npm run dev:preview` and open http://localhost:8080/preview/.
+-->
+<link rel="stylesheet" href="../dist/webview.css" />
+<style>
+  html, body { margin: 0; height: 100%; background: #fafafa; }
+  #app { height: 100vh; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>window.__ARCHI_ASSET_BASE__ = '../dist/assets';</script>
+<script type="module" src="../dist/webview.js"></script>
+</body>
+</html>
