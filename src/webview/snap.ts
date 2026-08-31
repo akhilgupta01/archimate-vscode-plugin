@@ -7,6 +7,7 @@ export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
 export const MIN_W = 50;
 export const MIN_H = 30;
+export const GRID_SIZE = 10;
 
 export interface Guide { type: 'v' | 'h'; pos: number; from: number; to: number; }
 export interface MoveSnapResult { dx: number; dy: number; guides: Guide[]; }

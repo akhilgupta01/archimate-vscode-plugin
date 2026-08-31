@@ -1,4 +1,4 @@
-.am-designer {
+:root {
   --am-canvas-bg: #fafafa;
   --am-grid-line: #ececec;
   --am-grid-line-major: #dcdcdc;
@@ -6,6 +6,8 @@
   --am-text: #222;
   --am-text-dim: #777;
   --am-accent: #3b6fd6;
+}
+.am-designer {
   display: flex;
   width: 100%;
   height: 100%;

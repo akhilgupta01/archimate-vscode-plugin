@@ -12,6 +12,8 @@
 // designer.ts (`_notifySelectionChanged`, `_applyInspectorEdit`,
 // `_applyInspectorReroute`).
 
+import { renderInspectorDom, Selection } from './inspectorView.js';
+
 interface VsCodeApi { postMessage(message: unknown): void; }
 declare function acquireVsCodeApi(): VsCodeApi;
 const vscode = acquireVsCodeApi();
@@ -20,66 +22,15 @@ const root = document.getElementById('app');
 if (!root) throw new Error('#app root not found');
 root.classList.add('am-inspector');
 
-type InspectorSelection =
-  | { kind: 'element'; id: string; type: string; name: string; documentation: string }
-  | { kind: 'relationship'; id: string; type: string; name: string }
-  | null;
-
-function humanize(type: string): string {
-  return type.replace(/([a-z])([A-Z])/g, '$1 $2');
-}
-
-function render(selection: InspectorSelection): void {
-  root!.innerHTML = '';
-  if (!selection) {
-    const empty = document.createElement('div');
-    empty.className = 'am-inspector-empty';
-    empty.textContent = 'Select an element or relationship to edit its properties.';
-    root!.appendChild(empty);
-    return;
-  }
-
-  const title = document.createElement('div');
-  title.className = 'am-inspector-title';
-  title.textContent = humanize(selection.type);
-
-  const nameLabel = document.createElement('label');
-  nameLabel.className = 'am-field-label';
-  nameLabel.textContent = selection.kind === 'relationship' ? 'Label' : 'Name';
-  const nameInput = document.createElement('input');
-  nameInput.className = 'am-field-input';
-  nameInput.placeholder = selection.kind === 'relationship' ? 'Unlabeled' : 'Unnamed';
-  nameInput.value = selection.name;
-  nameInput.addEventListener('input', () => {
-    vscode.postMessage({ type: 'archiInspectorEdit', id: selection.id, field: 'name', value: nameInput.value, final: false });
+function render(selection: Selection): void {
+  renderInspectorDom(root!, selection, {
+    onEdit: (id, field, value, final) => {
+      vscode.postMessage({ type: 'archiInspectorEdit', id, field, value, final });
+    },
+    onReroute: (id) => {
+      vscode.postMessage({ type: 'archiInspectorReroute', id });
+    },
   });
-  nameInput.addEventListener('change', () => {
-    vscode.postMessage({ type: 'archiInspectorEdit', id: selection.id, field: 'name', value: nameInput.value, final: true });
-  });
-  root!.append(title, nameLabel, nameInput);
-
-  if (selection.kind === 'element') {
-    const docLabel = document.createElement('label');
-    docLabel.className = 'am-field-label';
-    docLabel.textContent = 'Documentation';
-    const docInput = document.createElement('textarea');
-    docInput.className = 'am-field-textarea';
-    docInput.placeholder = 'Add documentation…';
-    docInput.value = selection.documentation;
-    docInput.addEventListener('change', () => {
-      vscode.postMessage({ type: 'archiInspectorEdit', id: selection.id, field: 'documentation', value: docInput.value, final: true });
-    });
-    root!.append(docLabel, docInput);
-  } else {
-    const rerouteBtn = document.createElement('button');
-    rerouteBtn.className = 'am-btn';
-    rerouteBtn.textContent = 'Auto-route again';
-    rerouteBtn.title = 'Clear manual bend/hinge points and let the router pick again';
-    rerouteBtn.addEventListener('click', () => {
-      vscode.postMessage({ type: 'archiInspectorReroute', id: selection.id });
-    });
-    root!.appendChild(rerouteBtn);
-  }
 }
 
 render(null);

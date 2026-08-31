@@ -1,61 +1,18 @@
 import { ArchimateModel, ArchimateElement, ArchimateRelationship, ELEMENT_TYPES, LAYERS, ElementType, RelationshipType, ModelJSON } from './model.js';
 import { Renderer } from './renderer.js';
-import { elementIcon, relationshipIcon } from './icons.js';
-import { snappedPerimeterPoint, simplifyCollinear, nearestPerimeterPoint } from './router.js';
-import { computeMoveSnap, computeResizedBox, enforceMinSize, computeResizeSnap, ResizeHandle } from './snap.js';
+import { GRID_SIZE } from './snap.js';
 import { LocalStorageAdapter } from './storage/LocalStorageAdapter.js';
-import type { StorageAdapter, TreeEntry, ViewData } from './storage/StorageAdapter.js';
-import { PALETTE_GROUPS, RELATIONSHIP_LIST, humanize } from './paletteData.js';
-import { legalNestingRelationships, canNest, NestingRelationOption } from './relationshipRules.js';
-
-const GRID_SIZE = 10;
-const GUIDE_SNAP_PX = 6; // screen pixels; converted to world units by dividing by zoom
-
-function clampNum(v: number, lo: number, hi: number): number {
-  if (lo > hi) return (lo + hi) / 2;
-  return Math.min(Math.max(v, lo), hi);
-}
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, attrs: Record<string, string> = {}): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
-  return e;
-}
-function fmtTime(ts: number): string {
-  const d = new Date(ts);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  return sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString();
-}
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-function svgTag(tag: string, attrs: Record<string, string | number> = {}): SVGElement {
-  const e = document.createElementNS(SVG_NS, tag);
-  for (const k in attrs) e.setAttribute(k, String(attrs[k]));
-  return e;
-}
-function folderGlyph(open: boolean): SVGElement {
-  const svg = svgTag('svg', { viewBox: '0 0 14 14', class: 'am-tree-icon' });
-  const common = { fill: '#dcb35c', stroke: '#a3792f', 'stroke-width': 1, 'stroke-linejoin': 'round' };
-  if (open) {
-    svg.appendChild(svgTag('path', { d: 'M1,4 L1,11.5 L12.5,11.5 L13.5,5.5 L4,5.5 L3,4 Z', ...common }));
-    svg.appendChild(svgTag('path', { d: 'M1,4 L5,4 L6,2.5 L11.5,2.5 L11.5,5.5', fill: 'none', stroke: '#a3792f', 'stroke-width': 1 }));
-  } else {
-    svg.appendChild(svgTag('path', { d: 'M1,3.5 L5.5,3.5 L6.5,5 L13,5 L13,11.5 L1,11.5 Z', ...common }));
-  }
-  return svg;
-}
-function fileGlyph(): SVGElement {
-  const svg = svgTag('svg', { viewBox: '0 0 14 14', class: 'am-tree-icon' });
-  svg.appendChild(svgTag('path', { d: 'M2.5,1.5 L8,1.5 L11.5,5 L11.5,12.5 L2.5,12.5 Z', fill: '#eef2fb', stroke: '#7b8aa6', 'stroke-width': 1, 'stroke-linejoin': 'round' }));
-  svg.appendChild(svgTag('path', { d: 'M8,1.5 L8,5 L11.5,5', fill: 'none', stroke: '#7b8aa6', 'stroke-width': 1 }));
-  svg.appendChild(svgTag('line', { x1: 4.3, y1: 7.3, x2: 9.7, y2: 7.3, stroke: '#7b8aa6', 'stroke-width': 1 }));
-  svg.appendChild(svgTag('line', { x1: 4.3, y1: 9.4, x2: 9.7, y2: 9.4, stroke: '#7b8aa6', 'stroke-width': 1 }));
-  return svg;
-}
+import type { StorageAdapter, ViewData } from './storage/StorageAdapter.js';
+import { humanize } from './paletteData.js';
+import { canNest } from './relationshipRules.js';
+import { ViewsPanel } from './viewsPanel.js';
+import { buildPaletteDom } from './paletteView.js';
+import { renderInspectorDom, INSPECTOR_EMPTY_HTML, Selection } from './inspectorView.js';
+import { CanvasInteractions } from './canvasInteractions.js';
+import { el } from './domUtil.js';
+import { SVG_NS } from './svgUtil.js';
 
 interface ContextMenuItem { label: string; action: () => void; disabled?: boolean; }
-type DropTarget = { type: 'folder'; path: string } | { type: 'root' };
 
 /** Minimal shape of the object VS Code's acquireVsCodeApi() returns — just enough to post/receive notifications outside the storage RPC channel. */
 export interface HostApi { postMessage(message: unknown): void; }
@@ -95,27 +52,23 @@ export class ArchimateDesigner {
   externalFileUri: string | null = null;
   renderer!: Renderer;
 
+  private interactions!: CanvasInteractions;
+
   // DOM refs, assigned during _buildDom()
-  private viewsPanel!: HTMLDivElement;
-  private viewsList!: HTMLDivElement;
+  private viewsPanelCtrl!: ViewsPanel;
   private rightDock?: HTMLDivElement;
   private palette?: HTMLDivElement;
   private inspector?: HTMLDivElement;
   private canvasWrap!: HTMLDivElement;
   private svg!: SVGSVGElement;
-  private statusEl!: HTMLDivElement;
+  statusEl!: HTMLDivElement;
   private zoomLabel!: HTMLSpanElement;
   private paletteScroll?: HTMLDivElement;
 
   private hostApi: HostApi | null = null;
   private embeddedPalette = true;
-  private expandedFolders: Set<string> | null = null;
-  private treeCache: TreeEntry[] = [];
   private spaceDown = false;
   private ctrlDown = false;
-  private justDragged = false;
-  private folderClickTimer: ReturnType<typeof setTimeout> | undefined;
-  private viewClickTimer: ReturnType<typeof setTimeout> | undefined;
   private changeTimer: ReturnType<typeof setTimeout> | undefined;
   private statusTimer: ReturnType<typeof setTimeout> | undefined;
   private contextMenu: HTMLDivElement | null = null;
@@ -130,12 +83,13 @@ export class ArchimateDesigner {
     this.embeddedPalette = !this.hostApi;
 
     this._buildDom();
+    this.interactions = new CanvasInteractions(this);
     this.renderer = new Renderer(this.svg, this.model, {
-      onElementPointerDown: (e, id) => this._onElementPointerDown(e, id),
-      onEdgeClick: (e, id) => this._onEdgeClick(e, id),
-      onHingePointerDown: (e, relId, end) => this._onHingePointerDown(e, relId, end),
-      onResizeHandlePointerDown: (e, elId, handle) => this._onResizeHandlePointerDown(e, elId, handle),
-      onSegmentPointerDown: (e, relId, segIndex) => this._onSegmentPointerDown(e, relId, segIndex),
+      onElementPointerDown: (e, id) => this.interactions.onElementPointerDown(e, id),
+      onEdgeClick: (e, id) => this.interactions.onEdgeClick(e, id),
+      onHingePointerDown: (e, relId, end) => this.interactions.onHingePointerDown(e, relId, end),
+      onResizeHandlePointerDown: (e, elId, handle) => this.interactions.onResizeHandlePointerDown(e, elId, handle),
+      onSegmentPointerDown: (e, relId, segIndex) => this.interactions.onSegmentPointerDown(e, relId, segIndex),
     });
     this._wireCanvasEvents();
     if (this.hostApi) {
@@ -149,7 +103,7 @@ export class ArchimateDesigner {
     }
     this.renderer.fullRender();
     this._applyTransform();
-    this._renderViewsList();
+    this.viewsPanelCtrl.renderList();
   }
 
   // ================= DOM scaffold =================
@@ -157,8 +111,7 @@ export class ArchimateDesigner {
     this.container.classList.add('am-designer');
     this.container.innerHTML = '';
 
-    this.viewsPanel = el('div', 'am-views-panel');
-    this._buildViewsPanel();
+    this.viewsPanelCtrl = new ViewsPanel(this);
 
     const main = el('div', 'am-main');
     const toolbar = el('div', 'am-toolbar');
@@ -186,332 +139,36 @@ export class ArchimateDesigner {
   }
 
   // ---------------- Views panel (left) ----------------
-  private _buildViewsPanel(): void {
-    this.viewsPanel.innerHTML = '';
-    const header = el('div', 'am-panel-header');
-    header.textContent = 'Views';
-    const newFolderBtn = el('button', 'am-btn am-btn-sm', { title: 'New folder' });
-    newFolderBtn.textContent = '+ Folder';
-    newFolderBtn.addEventListener('click', () => this.createFolder());
-    const newViewBtn = el('button', 'am-btn am-btn-sm', { title: 'Start a new blank view' });
-    newViewBtn.textContent = '+ View';
-    newViewBtn.addEventListener('click', () => this.newView());
-    header.append(newFolderBtn, newViewBtn);
-    this.viewsList = el('div', 'am-views-list');
-    this.viewsPanel.appendChild(header);
-    this.viewsPanel.appendChild(this.viewsList);
+  // The panel itself (folder tree, CRUD, drag-to-move, rename-inline) lives
+  // in ViewsPanel (viewsPanel.ts); these just forward the calls that were
+  // previously public API on this class, so any external caller (e.g. the
+  // dev-preview harness's `window.designer` console access) keeps working.
+  createFolder(name = 'New Folder', parentPath: string | null = null): Promise<string> {
+    return this.viewsPanelCtrl.createFolder(name, parentPath);
   }
-
-  private _expandedKey(): string { return `${this.storageKey}:expanded-folders`; }
-
-  private _loadExpanded(): Set<string> {
-    if (this.expandedFolders) return this.expandedFolders;
-    try { this.expandedFolders = new Set(JSON.parse(localStorage.getItem(this._expandedKey()) || '[]')); }
-    catch { this.expandedFolders = new Set(); }
-    return this.expandedFolders;
+  renameFolder(path: string, name: string): Promise<void> {
+    return this.viewsPanelCtrl.renameFolder(path, name);
   }
-  private _saveExpanded(): void {
-    try { localStorage.setItem(this._expandedKey(), JSON.stringify([...this._loadExpanded()])); } catch { /* ignore */ }
+  deleteFolder(path: string): Promise<void> {
+    return this.viewsPanelCtrl.deleteFolder(path);
   }
-  private _toggleFolder(path: string): void {
-    const set = this._loadExpanded();
-    if (set.has(path)) set.delete(path); else set.add(path);
-    this._saveExpanded();
-    this._renderViewsList();
+  moveViewToFolder(viewPath: string, folderPath: string | null): Promise<void> {
+    return this.viewsPanelCtrl.moveViewToFolder(viewPath, folderPath);
   }
-
-  // Everything below addresses folders/views by a "/"-joined relative path
-  // (matching the real directory layout a filesystem-backed adapter keeps on disk).
-  private _reprefixPath(p: string, oldPrefix: string, newPrefix: string): string {
-    if (p === oldPrefix) return newPrefix;
-    if (p.startsWith(`${oldPrefix}/`)) return newPrefix + p.slice(oldPrefix.length);
-    return p;
+  moveFolderToFolder(folderPath: string, targetParentPath: string | null): Promise<void> {
+    return this.viewsPanelCtrl.moveFolderToFolder(folderPath, targetParentPath);
   }
-  // After a folder is renamed/moved, fix up any local (non-persisted-by-path)
-  // state that referenced the old path.
-  private _reprefixLocalState(oldPrefix: string, newPrefix: string): void {
-    if (this.currentViewPath) this.currentViewPath = this._reprefixPath(this.currentViewPath, oldPrefix, newPrefix);
-    this.expandedFolders = new Set([...this._loadExpanded()].map(p => this._reprefixPath(p, oldPrefix, newPrefix)));
-    this._saveExpanded();
-  }
-  private _sanitizeName(name: string): string { return String(name).replace(/[\\/]/g, '-').trim(); }
-  private _uniqueName(base: string, siblingNames: Set<string>): string {
-    if (!siblingNames.has(base)) return base;
-    let i = 2;
-    while (siblingNames.has(`${base} ${i}`)) i++;
-    return `${base} ${i}`;
-  }
-
-  async createFolder(name = 'New Folder', parentPath: string | null = null): Promise<string> {
-    const tree = await this._loadTree();
-    const siblings = new Set(tree.filter(e => (e.parentPath || null) === (parentPath || null)).map(e => e.name));
-    const finalName = this._uniqueName(this._sanitizeName(name), siblings);
-    const path = parentPath ? `${parentPath}/${finalName}` : finalName;
-    await this.storage.createFolder(path);
-    this._loadExpanded().add(path);
-    this._saveExpanded();
-    await this._renderViewsList();
-    return path;
-  }
-
-  async renameFolder(path: string, name: string): Promise<void> {
-    const finalName = this._sanitizeName(name);
-    const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : null;
-    const newPath = parentPath ? `${parentPath}/${finalName}` : finalName;
-    if (newPath !== path) {
-      await this.storage.rename(path, newPath);
-      this._reprefixLocalState(path, newPath);
-    }
-    await this._renderViewsList();
-  }
-
-  async deleteFolder(path: string): Promise<void> {
-    const affectsCurrent = this.currentViewPath === path || (this.currentViewPath || '').startsWith(`${path}/`);
-    await this.storage.deleteFolder(path);
-    if (affectsCurrent) this.currentViewPath = null; // contents were reparented on disk; drop the stale binding
-    this._loadExpanded().delete(path);
-    this._saveExpanded();
-    await this._renderViewsList();
-  }
-
-  private _isDescendantPath(candidate: string, ancestor: string): boolean {
-    return candidate === ancestor || candidate.startsWith(`${ancestor}/`);
-  }
-
-  async moveViewToFolder(viewPath: string, folderPath: string | null): Promise<void> {
-    const name = viewPath.includes('/') ? viewPath.slice(viewPath.lastIndexOf('/') + 1) : viewPath;
-    const newPath = folderPath ? `${folderPath}/${name}` : name;
-    if (newPath === viewPath) return;
-    await this.storage.rename(viewPath, newPath);
-    if (this.currentViewPath === viewPath) this.currentViewPath = newPath;
-    await this._renderViewsList();
-  }
-
-  async moveFolderToFolder(folderPath: string, targetParentPath: string | null): Promise<void> {
-    if (folderPath === targetParentPath) return;
-    if (targetParentPath && this._isDescendantPath(targetParentPath, folderPath)) return; // no cycles
-    const name = folderPath.includes('/') ? folderPath.slice(folderPath.lastIndexOf('/') + 1) : folderPath;
-    const newPath = targetParentPath ? `${targetParentPath}/${name}` : name;
-    if (newPath === folderPath) return;
-    await this.storage.rename(folderPath, newPath);
-    this._reprefixLocalState(folderPath, newPath);
-    await this._renderViewsList();
-  }
-
-  // ---------------- tree rendering ----------------
-  private async _loadTree(): Promise<TreeEntry[]> {
-    this.treeCache = await this.storage.listTree();
-    return this.treeCache;
-  }
-
-  private async _renderViewsList(): Promise<void> {
-    const tree = await this._loadTree();
-    this.viewsList.innerHTML = '';
-    if (!tree.length) {
-      const empty = el('div', 'am-views-empty');
-      empty.textContent = 'No saved views yet. Build a diagram and click Save.';
-      this.viewsList.appendChild(empty);
-      return;
-    }
-    const folders = tree.filter(e => e.type === 'folder');
-    const views = tree.filter(e => e.type === 'view');
-    const rootFolders = folders.filter(f => !f.parentPath).sort((a, b) => a.name.localeCompare(b.name));
-    const rootViews = views.filter(v => !v.parentPath).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    for (const f of rootFolders) this._renderFolderNode(f, folders, views, 0);
-    for (const v of rootViews) this._renderViewNode(v, 0);
-  }
-
-  private _renderFolderNode(folder: TreeEntry, allFolders: TreeEntry[], allViews: TreeEntry[], depth: number): void {
-    const expanded = this._loadExpanded().has(folder.path);
-    const row = el('div', 'am-tree-row am-folder-row', { 'data-folder-path': folder.path });
-    row.style.paddingLeft = `${6 + depth * 15}px`;
-    const caret = el('span', 'am-caret');
-    caret.textContent = expanded ? '▾' : '▸';
-    const icon = folderGlyph(expanded);
-    const nameEl = el('span', 'am-tree-name');
-    nameEl.textContent = folder.name;
-    nameEl.title = 'Click to expand/collapse · double-click to rename';
-    const delBtn = el('button', 'am-view-delete', { title: 'Delete folder (contents move up a level)' });
-    delBtn.textContent = '×';
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); this.deleteFolder(folder.path); });
-    row.append(caret, icon, nameEl, delBtn);
-
-    // Debounce single-click so a double-click isn't preceded by a toggle
-    // that rebuilds this list and destroys the in-progress rename input.
-    row.addEventListener('click', () => {
-      if (this.justDragged) return;
-      clearTimeout(this.folderClickTimer);
-      this.folderClickTimer = setTimeout(() => this._toggleFolder(folder.path), 240);
-    });
-    nameEl.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      clearTimeout(this.folderClickTimer);
-      this._renameFolderInline(folder, nameEl);
-    });
-    row.addEventListener('pointerdown', (e) => this._startTreeDrag(e, 'folder', folder.path, folder.name));
-
-    this.viewsList.appendChild(row);
-    if (expanded) {
-      const childFolders = allFolders.filter(f => f.parentPath === folder.path).sort((a, b) => a.name.localeCompare(b.name));
-      const childViews = allViews.filter(v => v.parentPath === folder.path).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-      for (const cf of childFolders) this._renderFolderNode(cf, allFolders, allViews, depth + 1);
-      for (const cv of childViews) this._renderViewNode(cv, depth + 1);
-    }
-  }
-
-  private _renderViewNode(v: TreeEntry, depth: number): void {
-    const item = el('div', 'am-tree-row am-view-item' + (v.path === this.currentViewPath ? ' am-active' : ''));
-    item.style.paddingLeft = `${6 + depth * 15}px`;
-    item.appendChild(fileGlyph());
-    const nameEl = el('span', 'am-tree-name');
-    nameEl.textContent = v.name;
-    nameEl.title = 'Click to open · double-click to rename';
-    const metaEl = el('span', 'am-view-meta');
-    metaEl.textContent = v.updatedAt ? fmtTime(v.updatedAt) : '';
-    const delBtn = el('button', 'am-view-delete', { title: 'Delete view' });
-    delBtn.textContent = '×';
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); this.deleteView(v.path); });
-    // Debounce single-click so a double-click isn't preceded by a loadView()
-    // that rebuilds this list and destroys the in-progress rename input.
-    nameEl.addEventListener('click', () => {
-      if (this.justDragged) return;
-      clearTimeout(this.viewClickTimer);
-      this.viewClickTimer = setTimeout(() => this.loadView(v.path), 240);
-    });
-    nameEl.addEventListener('dblclick', () => {
-      clearTimeout(this.viewClickTimer);
-      this._renameInline(v, nameEl);
-    });
-    item.append(nameEl, metaEl, delBtn);
-    item.addEventListener('pointerdown', (e) => this._startTreeDrag(e, 'view', v.path, v.name));
-    this.viewsList.appendChild(item);
-  }
-
-  // drag a view/folder row; only engages after the pointer moves past a
-  // threshold, so a plain click still reaches the click/dblclick handlers
-  private _startTreeDrag(e: PointerEvent, kind: 'view' | 'folder', path: string, label: string): void {
-    if (e.button !== undefined && e.button !== 0) return;
-    const startX = e.clientX, startY = e.clientY;
-    let dragging = false, ghost: HTMLDivElement | null = null, dropTarget: DropTarget | null = null;
-    const clearHover = () => this.viewsList.querySelectorAll('.am-drop-hover').forEach(n => n.classList.remove('am-drop-hover'));
-    const move = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX, dy = ev.clientY - startY;
-      if (!dragging && Math.hypot(dx, dy) > 5) {
-        dragging = true;
-        ghost = el('div', 'am-drag-ghost');
-        ghost.textContent = label;
-        document.body.appendChild(ghost);
-      }
-      if (!dragging || !ghost) return;
-      ghost.style.left = `${ev.clientX + 12}px`;
-      ghost.style.top = `${ev.clientY + 12}px`;
-      clearHover();
-      const under = document.elementFromPoint(ev.clientX, ev.clientY);
-      const folderRow = under?.closest<HTMLElement>('.am-folder-row');
-      if (folderRow && folderRow.dataset.folderPath !== path) {
-        folderRow.classList.add('am-drop-hover');
-        dropTarget = { type: 'folder', path: folderRow.dataset.folderPath! };
-      } else if (under && this.viewsList.contains(under)) {
-        this.viewsList.classList.add('am-drop-hover');
-        dropTarget = { type: 'root' };
-      } else {
-        dropTarget = null;
-      }
-    };
-    const up = async () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      if (dragging) {
-        ghost?.remove();
-        clearHover();
-        this.viewsList.classList.remove('am-drop-hover');
-        if (dropTarget) {
-          const targetFolderPath = dropTarget.type === 'folder' ? dropTarget.path : null;
-          if (kind === 'view') await this.moveViewToFolder(path, targetFolderPath);
-          else await this.moveFolderToFolder(path, targetFolderPath);
-        }
-        this.justDragged = true;
-        setTimeout(() => { this.justDragged = false; }, 0);
-      }
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }
-
-  private _renameFolderInline(folder: TreeEntry, nameEl: HTMLElement): void {
-    const input = el('input', 'am-view-rename-input');
-    input.value = folder.name;
-    nameEl.replaceWith(input);
-    input.focus();
-    input.select();
-    const commit = () => {
-      const val = input.value.trim();
-      if (val) this.renameFolder(folder.path, val);
-      else this._renderViewsList();
-    };
-    input.addEventListener('click', (e) => e.stopPropagation());
-    input.addEventListener('blur', commit);
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.keyCode === 13) input.blur();
-      if (e.key === 'Escape') { input.value = folder.name; input.blur(); }
-    });
-  }
-
-  private _renameInline(view: TreeEntry, nameEl: HTMLElement): void {
-    const input = el('input', 'am-view-rename-input');
-    input.value = view.name;
-    nameEl.replaceWith(input);
-    input.focus();
-    input.select();
-    const commit = () => {
-      const val = input.value.trim();
-      if (val) this.renameView(view.path, val);
-      else this._renderViewsList();
-    };
-    input.addEventListener('blur', commit);
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.keyCode === 13) input.blur();
-      if (e.key === 'Escape') { input.value = view.name; input.blur(); }
-    });
-  }
-
   newView(): void {
-    this.model = new ArchimateModel();
-    this.renderer.model = this.model;
-    this.currentViewPath = null;
-    this.renderer.fullRender();
-    this.resetView();
-    this._setSelection(new Set());
-    this._renderViewsList();
-    this._flashStatus('New blank view. Click Save to keep it.');
+    this.viewsPanelCtrl.newView();
   }
-
-  async loadView(path: string): Promise<boolean> {
-    try {
-      const data = await this.storage.readView(path);
-      this.load(data);
-      this.currentViewPath = path;
-      await this._renderViewsList();
-      this._flashStatus(`Loaded "${path.split('/').pop()}".`);
-      return true;
-    } catch { return false; }
+  loadView(path: string): Promise<boolean> {
+    return this.viewsPanelCtrl.loadView(path);
   }
-
-  async renameView(path: string, name: string): Promise<void> {
-    const finalName = this._sanitizeName(name);
-    const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : null;
-    const newPath = parentPath ? `${parentPath}/${finalName}` : finalName;
-    if (newPath !== path) {
-      await this.storage.rename(path, newPath);
-      if (this.currentViewPath === path) this.currentViewPath = newPath;
-    }
-    await this._renderViewsList();
+  renameView(path: string, name: string): Promise<void> {
+    return this.viewsPanelCtrl.renameView(path, name);
   }
-
-  async deleteView(path: string): Promise<void> {
-    await this.storage.deleteView(path);
-    if (this.currentViewPath === path) this.currentViewPath = null;
-    await this._renderViewsList();
+  deleteView(path: string): Promise<void> {
+    return this.viewsPanelCtrl.deleteView(path);
   }
 
   // ---------------- Right dock: embedded-mode-only palette + inspector ----------------
@@ -554,70 +211,13 @@ export class ArchimateDesigner {
     header.appendChild(collapseBtn);
     palette.appendChild(header);
 
-    const search = el('input', 'am-palette-search');
-    search.placeholder = 'Filter…';
-    search.addEventListener('input', () => this._filterPalette(search.value.trim().toLowerCase()));
-    palette.appendChild(search);
-
-    const scroll = el('div', 'am-palette-scroll');
-
-    // Relationships first, mirroring how connector tools lead an ArchiMate palette.
-    const relSection = el('div', 'am-palette-section');
-    const relHeader = el('div', 'am-palette-header am-palette-header-rel');
-    relHeader.textContent = 'Relationships';
-    relHeader.addEventListener('click', () => relSection.classList.toggle('am-collapsed'));
-    relSection.appendChild(relHeader);
-    const relGrid = el('div', 'am-icon-grid');
-    for (const type of RELATIONSHIP_LIST) {
-      const btn = el('button', 'am-icon-btn am-icon-btn-rel', { title: humanize(type), type: 'button' });
-      btn.dataset.rel = type;
-      btn.appendChild(relationshipIcon(type));
-      btn.addEventListener('click', () => this._setRelationshipTool(type, btn));
-      relGrid.appendChild(btn);
-    }
-    relSection.appendChild(relGrid);
-    scroll.appendChild(relSection);
-
-    for (const group of PALETTE_GROUPS) {
-      const layer = LAYERS[group.layer];
-      const section = el('div', 'am-palette-section');
-      const header2 = el('div', 'am-palette-header');
-      header2.style.setProperty('--am-layer-color', layer.color);
-      header2.style.setProperty('--am-layer-stroke', layer.stroke);
-      header2.textContent = layer.label;
-      header2.addEventListener('click', () => section.classList.toggle('am-collapsed'));
-      section.appendChild(header2);
-      const grid = el('div', 'am-icon-grid');
-      for (const type of group.types) {
-        const btn = el('button', 'am-icon-btn', { title: humanize(type), type: 'button' });
-        btn.dataset.type = type;
-        btn.style.setProperty('--am-layer-stroke', layer.stroke);
-        btn.appendChild(elementIcon(type));
-        btn.addEventListener('pointerdown', (e) => this._startPaletteDrag(e, type));
-        grid.appendChild(btn);
-      }
-      section.appendChild(grid);
-      scroll.appendChild(section);
-    }
-
+    const { searchInput, scroll, elementButtons, relButtons } = buildPaletteDom();
+    palette.appendChild(searchInput);
     palette.appendChild(scroll);
     this.paletteScroll = scroll;
-  }
 
-  private _filterPalette(q: string): void {
-    const paletteScroll = this.paletteScroll!;
-    const items = paletteScroll.querySelectorAll<HTMLElement>('.am-icon-btn[data-type]');
-    for (const item of items) {
-      const label = item.title.toLowerCase();
-      item.style.display = !q || label.includes(q) ? '' : 'none';
-    }
-    for (const section of paletteScroll.querySelectorAll<HTMLElement>('.am-palette-section')) {
-      const typeItems = section.querySelectorAll<HTMLElement>('.am-icon-btn[data-type]');
-      if (!typeItems.length) continue;
-      const visible = [...typeItems].some(i => i.style.display !== 'none');
-      section.style.display = !q || visible ? '' : 'none';
-      if (q && visible) section.classList.remove('am-collapsed');
-    }
+    for (const [type, btn] of relButtons) btn.addEventListener('click', () => this._setRelationshipTool(type, btn));
+    for (const [type, btn] of elementButtons) btn.addEventListener('pointerdown', (e) => this._startPaletteDrag(e, type));
   }
 
   private _buildToolbar(toolbar: HTMLDivElement): void {
@@ -650,7 +250,7 @@ export class ArchimateDesigner {
   }
 
   private _buildInspector(): void {
-    this.inspector!.innerHTML = '<div class="am-inspector-empty">Select an element or relationship to edit its properties.</div>';
+    this.inspector!.innerHTML = INSPECTOR_EMPTY_HTML;
   }
 
   // ================= palette drag-to-create =================
@@ -686,7 +286,7 @@ export class ArchimateDesigner {
     const r = this.canvasWrap.getBoundingClientRect();
     return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
   }
-  private _clientToWorld(cx: number, cy: number): { x: number; y: number } {
+  _clientToWorld(cx: number, cy: number): { x: number; y: number } {
     const r = this.svg.getBoundingClientRect();
     return { x: (cx - r.left - this.pan.x) / this.zoom, y: (cy - r.top - this.pan.y) / this.zoom };
   }
@@ -725,7 +325,7 @@ export class ArchimateDesigner {
   }
 
   /** Clears whatever tool is currently armed (relationship or element), embedded or host-driven. */
-  private _cancelActiveTool(): void {
+  _cancelActiveTool(): void {
     this.activeRelType = null;
     this.pendingSource = null;
     this.armedElementType = null;
@@ -756,420 +356,11 @@ export class ArchimateDesigner {
     });
   }
 
-  // ================= element interactions =================
-  private _onElementPointerDown(e: PointerEvent, id: string): void {
-    e.stopPropagation();
-    if (this.activeRelType) {
-      if (!this.pendingSource) {
-        this.pendingSource = id;
-        this._setSelection(new Set([id]));
-        this.statusEl.textContent = `Source selected. Click a target element for ${humanize(this.activeRelType)}.`;
-      } else {
-        const type = this.activeRelType;
-        const source = this.pendingSource;
-        this._cancelActiveTool();
-        if (source !== id) this.addRelationship(type, source, id);
-        this._setSelection(new Set());
-      }
-      return;
-    }
-    if (e.shiftKey) {
-      const next = new Set(this.selected);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      this._setSelection(next);
-      return;
-    }
-    if (!this.selected.has(id) || this.selected.size <= 1) this._setSelection(new Set([id]));
-
-    // Move every selected element together, keyed off the one that was
-    // actually grabbed (its box drives alignment-guide snapping). Nested
-    // children move along with their container even when not individually
-    // selected.
-    const baseIds = [...this.selected].filter(sid => this.model.elements.has(sid));
-    if (!baseIds.includes(id)) baseIds.push(id);
-    const movingIds = this._expandWithDescendants(baseIds);
-    const movingSet = new Set(movingIds);
-    const starts = new Map(movingIds.map(mid => {
-      const m = this.model.getElement(mid)!;
-      return [mid, { x: m.x, y: m.y }] as const;
-    }));
-    const primary = this.model.getElement(id)!;
-    const others = [...this.model.elements.values()].filter(o => !movingSet.has(o.id)).map(o => o.bounds());
-    const startX = e.clientX, startY = e.clientY;
-    let moved = false;
-    let hoverContainerId: string | null = null;
-    const move = (ev: PointerEvent) => {
-      const dx = (ev.clientX - startX) / this.zoom;
-      const dy = (ev.clientY - startY) / this.zoom;
-      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) moved = true;
-      const primaryStart = starts.get(id)!;
-      const threshold = GUIDE_SNAP_PX / this.zoom;
-      const snap = computeMoveSnap({ x: primaryStart.x + dx, y: primaryStart.y + dy, w: primary.w, h: primary.h }, others, threshold);
-      const snapDx = dx + snap.dx, snapDy = dy + snap.dy;
-      for (const mid of movingIds) {
-        const s = starts.get(mid)!;
-        const m = this.model.getElement(mid)!;
-        m.x = s.x + snapDx;
-        m.y = s.y + snapDy;
-        this.renderer.moveElementDom(m);
-        this.renderer.rerouteConnected(mid);
-      }
-      this.renderer.showGuides(snap.guides);
-
-      // Highlight a candidate container under the grabbed element, mirroring
-      // the blue "drop into me" highlight described for Archi's container
-      // elements.
-      const newHoverId = canNest(primary.type)
-        ? this._hitTestContainerFor(id, primary.x + primary.w / 2, primary.y + primary.h / 2, movingSet)?.id ?? null
-        : null;
-      if (newHoverId !== hoverContainerId) {
-        if (hoverContainerId) this.renderer.elementDom.get(hoverContainerId)?.classList.remove('am-nest-target');
-        if (newHoverId) this.renderer.elementDom.get(newHoverId)?.classList.add('am-nest-target');
-        hoverContainerId = newHoverId;
-      }
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      this.renderer.clearGuides();
-      if (hoverContainerId) this.renderer.elementDom.get(hoverContainerId)?.classList.remove('am-nest-target');
-      if (moved) {
-        this._resolveNestingAfterMove(movingIds);
-        this._afterModelChange();
-      }
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }
-
-  // Every element nested (directly or transitively) inside one of `ids`,
-  // plus `ids` themselves — used so dragging a container carries its
-  // children along even when they aren't individually selected.
-  private _expandWithDescendants(ids: string[]): string[] {
-    const result = new Set(ids);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const elObj of this.model.elements.values()) {
-        if (elObj.parentId && result.has(elObj.parentId) && !result.has(elObj.id)) {
-          result.add(elObj.id);
-          changed = true;
-        }
-      }
-    }
-    return [...result];
-  }
-
-  // Topmost element (excluding `excludeIds` and any of `elId`'s own
-  // descendants, to avoid nesting cycles) whose bounds contain (x, y).
-  private _hitTestContainerFor(elId: string, x: number, y: number, excludeIds: Set<string>): ArchimateElement | null {
-    let best: ArchimateElement | null = null;
-    for (const cand of this.model.elements.values()) {
-      if (cand.id === elId || excludeIds.has(cand.id)) continue;
-      if (!canNest(cand.type)) continue;
-      if (this.model.isDescendantOf(cand.id, elId)) continue;
-      const b = cand.bounds();
-      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) best = cand;
-    }
-    return best;
-  }
-
-  // Recursively moves an element and everything nested inside it by the
-  // same delta, keeping a container's whole subtree visually attached.
-  private _moveSubtree(id: string, dx: number, dy: number): void {
-    if (!dx && !dy) return;
-    const elObj = this.model.getElement(id);
-    if (!elObj) return;
-    elObj.x += dx;
-    elObj.y += dy;
-    this.renderer.moveElementDom(elObj);
-    this.renderer.rerouteConnected(id);
-    for (const child of this.model.getChildren(id)) this._moveSubtree(child.id, dx, dy);
-  }
-
-  // Makes `child` a visual child of `parent`: fits it inside the parent's
-  // box (growing the parent if it doesn't already fit) and records the
-  // containment. Mirrors Archi's "Container Elements" nesting — this alone
-  // does not create a semantic relationship, see _offerNestingRelationships.
-  private _nestChild(parent: ArchimateElement, child: ArchimateElement): void {
-    const PAD = 10, HEADER = 26;
-    const siblings = this.model.getChildren(parent.id).filter(c => c.id !== child.id);
-    const fits = child.x >= parent.x + PAD && child.x + child.w <= parent.x + parent.w - PAD &&
-      child.y >= parent.y + HEADER && child.y + child.h <= parent.y + parent.h - PAD;
-    const targetX = fits ? child.x : parent.x + PAD;
-    const targetY = fits
-      ? child.y
-      : (siblings.length ? siblings.reduce((m, c) => Math.max(m, c.y + c.h), parent.y + HEADER) + PAD : parent.y + HEADER);
-    const neededRight = targetX + child.w + PAD;
-    const neededBottom = targetY + child.h + PAD;
-    if (neededRight > parent.x + parent.w) parent.w = neededRight - parent.x;
-    if (neededBottom > parent.y + parent.h) parent.h = neededBottom - parent.y;
-    this.renderer.updateElementGeometry(parent);
-    this.renderer.rerouteConnected(parent.id);
-    child.parentId = parent.id;
-    this._moveSubtree(child.id, targetX - child.x, targetY - child.y);
-    this.renderer.reorderByContainment();
-  }
-
-  // After a drag ends, checks whether any of the top-level moved elements
-  // (i.e. not ones just carried along as a descendant of another mover)
-  // landed on/off a container, and applies the resulting nesting.
-  private _resolveNestingAfterMove(movingIds: string[]): void {
-    const movingSet = new Set(movingIds);
-    const pendingPairs: { parent: ArchimateElement; child: ArchimateElement }[] = [];
-    for (const id of movingIds) {
-      const elObj = this.model.getElement(id);
-      if (!elObj || !canNest(elObj.type)) continue;
-      if (elObj.parentId && movingSet.has(elObj.parentId)) continue; // moving with its own container already
-      const cx = elObj.x + elObj.w / 2, cy = elObj.y + elObj.h / 2;
-      const target = this._hitTestContainerFor(id, cx, cy, movingSet);
-      if (target && target.id !== elObj.parentId) {
-        pendingPairs.push({ parent: target, child: elObj });
-      } else if (!target && elObj.parentId) {
-        const oldParent = this.model.getElement(elObj.parentId);
-        const stillInside = !!oldParent && elObj.x >= oldParent.x && elObj.x + elObj.w <= oldParent.x + oldParent.w &&
-          elObj.y >= oldParent.y && elObj.y + elObj.h <= oldParent.y + oldParent.h;
-        if (!stillInside) elObj.parentId = null;
-      }
-    }
-    for (const { parent, child } of pendingPairs) this._nestChild(parent, child);
-    if (pendingPairs.length) this._offerNestingRelationships(pendingPairs);
-  }
-
-  // Offers to create the ArchiMate relationship(s) implied by one or more
-  // fresh nestings. Pairs with only the generic Association fallback legal
-  // are created silently; pairs with a real choice get a picker dialog
-  // (mirrors Archi's "Dialog to create a new nested relationship").
-  private _offerNestingRelationships(pairs: { parent: ArchimateElement; child: ArchimateElement }[]): void {
-    const rows = pairs
-      .map(p => ({ parent: p.parent, child: p.child, options: legalNestingRelationships(p.parent.type, p.child.type) }))
-      .filter(r => r.options.length > 0);
-    const dialogRows: typeof rows = [];
-    for (const row of rows) {
-      if (row.options.length <= 1) {
-        const opt = row.options[0];
-        if (opt) this._applyNestingRelation(row.parent, row.child, opt);
-      } else {
-        dialogRows.push(row);
-      }
-    }
-    if (dialogRows.length) this._showNestingDialog(dialogRows);
-  }
-
-  private _applyNestingRelation(parent: ArchimateElement, child: ArchimateElement, opt: NestingRelationOption): void {
-    const source = opt.direction === 'forward' ? parent : child;
-    const target = opt.direction === 'forward' ? child : parent;
-    this.addRelationship(opt.type, source.id, target.id);
-  }
-
-  private _showNestingDialog(rows: { parent: ArchimateElement; child: ArchimateElement; options: NestingRelationOption[] }[]): void {
-    const overlay = el('div', 'am-modal-overlay');
-    const modal = el('div', 'am-modal');
-    const title = el('div', 'am-modal-title');
-    title.textContent = rows.length === 1 ? 'Create a relationship?' : 'Create relationships?';
-    const body = el('div', 'am-modal-body');
-    const rowSelects: { select: HTMLSelectElement; parent: ArchimateElement; child: ArchimateElement }[] = [];
-    for (const row of rows) {
-      const rowEl = el('div', 'am-nest-row');
-      const label = el('span', 'am-nest-row-label');
-      label.textContent = `${row.child.name || humanize(row.child.type)} → ${row.parent.name || humanize(row.parent.type)}`;
-      const select = el('select', 'am-nest-row-select');
-      const noneOpt = document.createElement('option');
-      noneOpt.value = '';
-      noneOpt.textContent = '(none)';
-      select.appendChild(noneOpt);
-      const defaultOpt = row.options.find(o => o.type !== 'Association') || row.options[0];
-      for (const opt of row.options) {
-        const optionEl = document.createElement('option');
-        optionEl.value = `${opt.type}|${opt.direction}`;
-        optionEl.textContent = humanize(opt.type) + (opt.direction === 'reverse' ? ' (reverse)' : '');
-        if (defaultOpt && opt.type === defaultOpt.type && opt.direction === defaultOpt.direction) optionEl.selected = true;
-        select.appendChild(optionEl);
-      }
-      rowEl.append(label, select);
-      body.appendChild(rowEl);
-      rowSelects.push({ select, parent: row.parent, child: row.child });
-    }
-    const actions = el('div', 'am-modal-actions');
-    const cancelBtn = el('button', 'am-btn');
-    cancelBtn.textContent = 'Cancel';
-    const createBtn = el('button', 'am-btn am-btn-primary');
-    createBtn.textContent = rows.length === 1 ? 'Create' : 'Create Selected';
-    const close = () => overlay.remove();
-    cancelBtn.addEventListener('click', close);
-    createBtn.addEventListener('click', () => {
-      for (const { select, parent, child } of rowSelects) {
-        if (!select.value) continue;
-        const [type, direction] = select.value.split('|') as [RelationshipType, 'forward' | 'reverse'];
-        this._applyNestingRelation(parent, child, { type, direction });
-      }
-      close();
-    });
-    actions.append(cancelBtn, createBtn);
-    modal.append(title, body, actions);
-    overlay.appendChild(modal);
-    overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(); });
-    document.body.appendChild(overlay);
-  }
-
-  private _onEdgeClick(e: PointerEvent, id: string): void {
-    if (this.activeRelType) return;
-    if (e.shiftKey) {
-      const next = new Set(this.selected);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      this._setSelection(next);
-      return;
-    }
-    this._setSelection(new Set([id]));
-  }
-
-  // Returns the element under (x,y) in world space, excluding excludeId, or
-  // null if none — used to detect "drop this hinge onto a different
-  // element" while dragging. Picks the last (topmost-drawn) match.
-  private _hitTestElement(x: number, y: number, excludeId: string): ArchimateElement | null {
-    let best: ArchimateElement | null = null;
-    for (const el of this.model.elements.values()) {
-      if (el.id === excludeId) continue;
-      const b = el.bounds();
-      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) best = el;
-    }
-    return best;
-  }
-
-  // Drag a connector's source/target hinge point. While dragging, it slides
-  // along whichever element's boundary is currently under the pointer,
-  // snapped to the grid — normally that's the element it's already
-  // attached to (unchanged, matching the previous behavior), but dropping
-  // it directly onto a *different* element re-targets the connector to
-  // attach there instead (source/target reassigned). Dragging over empty
-  // space keeps it constrained to the originally-attached element.
-  private _onHingePointerDown(e: PointerEvent, relId: string, end: 'source' | 'target'): void {
-    e.preventDefault();
-    const rel = this.model.relationships.get(relId);
-    if (!rel) return;
-    const originalElId = end === 'source' ? rel.source : rel.target;
-    const otherEndElId = end === 'source' ? rel.target : rel.source;
-    const originalEl = this.model.getElement(originalElId);
-    if (!originalEl) return;
-    // Dragging the endpoint itself always means repositioning it — any
-    // previously-set manual bend shape was tailored to the old position and
-    // is now stale, even if it ends up back on the same element.
-    rel.bendpoints = null;
-    this._setSelection(new Set([relId]));
-    let hoverTargetId: string | null = null;
-    const move = (ev: PointerEvent) => {
-      const world = this._clientToWorld(ev.clientX, ev.clientY);
-      const hit = this._hitTestElement(world.x, world.y, otherEndElId);
-      const attachEl = hit || originalEl;
-      const snapped = snappedPerimeterPoint(attachEl.bounds(), world.x, world.y, GRID_SIZE);
-      const port = { side: snapped.side, t: snapped.t };
-      if (end === 'source') { rel.source = attachEl.id; rel.sourcePort = port; }
-      else { rel.target = attachEl.id; rel.targetPort = port; }
-
-      const newHoverId = hit && hit.id !== originalElId ? hit.id : null;
-      if (newHoverId !== hoverTargetId) {
-        if (hoverTargetId) this.renderer.elementDom.get(hoverTargetId)?.classList.remove('am-hinge-target');
-        if (newHoverId) this.renderer.elementDom.get(newHoverId)?.classList.add('am-hinge-target');
-        hoverTargetId = newHoverId;
-      }
-      this.renderer.renderEdge(rel);
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      if (hoverTargetId) this.renderer.elementDom.get(hoverTargetId)?.classList.remove('am-hinge-target');
-      this._afterModelChange();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }
-
-  // Resize an element by dragging one of its 8 handles: snaps the moving
-  // edge to other elements' edges/centers first (PowerPoint-style smart
-  // guides), falling back to the grid when nothing else lines up.
-  private _onResizeHandlePointerDown(e: PointerEvent, elId: string, handle: ResizeHandle): void {
-    e.preventDefault();
-    const elModel = this.model.getElement(elId);
-    if (!elModel) return;
-    this._setSelection(new Set([elId]));
-    const start = { x: elModel.x, y: elModel.y, w: elModel.w, h: elModel.h };
-    const startWorld = this._clientToWorld(e.clientX, e.clientY);
-    const others = [...this.model.elements.values()].filter(o => o.id !== elId).map(o => o.bounds());
-    const move = (ev: PointerEvent) => {
-      const world = this._clientToWorld(ev.clientX, ev.clientY);
-      const dx = world.x - startWorld.x, dy = world.y - startWorld.y;
-      let box = computeResizedBox(start, handle, dx, dy);
-      box = enforceMinSize(start, handle, box);
-      const threshold = GUIDE_SNAP_PX / this.zoom;
-      const snap = computeResizeSnap(handle, box, others, threshold, GRID_SIZE);
-      elModel.x = snap.x; elModel.y = snap.y; elModel.w = snap.w; elModel.h = snap.h;
-      this.renderer.updateElementGeometry(elModel);
-      this.renderer.rerouteConnected(elId);
-      this.renderer.showGuides(snap.guides);
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      this.renderer.clearGuides();
-      this._afterModelChange();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }
-
-  // Drag one straight segment of a connector's route perpendicular to
-  // itself: both its endpoints shift together, so the segments on either
-  // side stretch to stay connected. If an endpoint is the source/target
-  // hinge itself, it slides along that element's boundary right along with
-  // the segment (clamped to the boundary, and rel.sourcePort/targetPort
-  // updated) instead of being left behind; otherwise it's a plain bend
-  // point and just moves freely. Converts the edge to a manually-bent route
-  // (relationship.bendpoints), same as hinge dragging.
-  private _onSegmentPointerDown(e: PointerEvent, relId: string, segIndex: number): void {
-    e.preventDefault();
-    const rel = this.model.relationships.get(relId);
-    if (!rel) return;
-    const basePts = this.renderer.lastPoints.get(relId);
-    if (!basePts || segIndex < 0 || segIndex + 1 > basePts.length - 1) return;
-    this._setSelection(new Set([relId]));
-    const a0 = basePts[segIndex], b0 = basePts[segIndex + 1];
-    const horizontal = a0.y === b0.y;
-    const isSourceEnd = segIndex === 0;
-    const isTargetEnd = segIndex + 1 === basePts.length - 1;
-    const sourceBox = isSourceEnd ? this.model.getElement(rel.source)?.bounds() : undefined;
-    const targetBox = isTargetEnd ? this.model.getElement(rel.target)?.bounds() : undefined;
-    const startWorld = this._clientToWorld(e.clientX, e.clientY);
-    const move = (ev: PointerEvent) => {
-      const world = this._clientToWorld(ev.clientX, ev.clientY);
-      const pts = basePts.map(p => ({ ...p }));
-      if (horizontal) {
-        let ny = Math.round((a0.y + (world.y - startWorld.y)) / GRID_SIZE) * GRID_SIZE;
-        if (sourceBox) ny = clampNum(ny, sourceBox.y, sourceBox.y + sourceBox.h);
-        if (targetBox) ny = clampNum(ny, targetBox.y, targetBox.y + targetBox.h);
-        pts[segIndex] = { x: a0.x, y: ny };
-        pts[segIndex + 1] = { x: b0.x, y: ny };
-      } else {
-        let nx = Math.round((a0.x + (world.x - startWorld.x)) / GRID_SIZE) * GRID_SIZE;
-        if (sourceBox) nx = clampNum(nx, sourceBox.x, sourceBox.x + sourceBox.w);
-        if (targetBox) nx = clampNum(nx, targetBox.x, targetBox.x + targetBox.w);
-        pts[segIndex] = { x: nx, y: a0.y };
-        pts[segIndex + 1] = { x: nx, y: b0.y };
-      }
-      if (sourceBox) { const np = nearestPerimeterPoint(sourceBox, pts[0].x, pts[0].y); rel.sourcePort = { side: np.side, t: np.t }; }
-      if (targetBox) { const np = nearestPerimeterPoint(targetBox, pts[pts.length - 1].x, pts[pts.length - 1].y); rel.targetPort = { side: np.side, t: np.t }; }
-      rel.bendpoints = simplifyCollinear(pts);
-      this.renderer.renderEdge(rel);
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      this._afterModelChange();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }
-
-  private _setSelection(idSet: Set<string>): void {
+  // Element/edge drag, resize, and nesting interactions live in
+  // CanvasInteractions (canvasInteractions.ts) — see `this.interactions`,
+  // constructed in the constructor and wired to the renderer's pointer
+  // callbacks.
+  _setSelection(idSet: Set<string>): void {
     this.selected = idSet;
     this.renderer.setSelected(idSet);
     if (this.inspector) this._renderInspector();
@@ -1177,42 +368,10 @@ export class ArchimateDesigner {
   }
 
   private _renderInspector(): void {
-    const inspector = this.inspector!;
-    inspector.innerHTML = '';
-    if (this.selected.size !== 1) {
-      inspector.innerHTML = '<div class="am-inspector-empty">Select an element or relationship to edit its properties.</div>';
-      return;
-    }
-    const id = [...this.selected][0];
-    const elModel = this.model.getElement(id);
-    const relModel = this.model.relationships.get(id);
-    if (elModel) {
-      const title = el('div', 'am-inspector-title'); title.textContent = humanize(elModel.type);
-      const nameLabel = el('label', 'am-field-label'); nameLabel.textContent = 'Name';
-      const nameInput = el('input', 'am-field-input');
-      nameInput.placeholder = 'Unnamed';
-      nameInput.value = elModel.name;
-      nameInput.addEventListener('input', () => { elModel.name = nameInput.value; this.renderer.updateElementLabel(elModel); });
-      nameInput.addEventListener('change', () => this._afterModelChange());
-      const docLabel = el('label', 'am-field-label'); docLabel.textContent = 'Documentation';
-      const docInput = el('textarea', 'am-field-textarea');
-      docInput.placeholder = 'Add documentation…';
-      docInput.value = elModel.documentation || '';
-      docInput.addEventListener('change', () => { elModel.documentation = docInput.value; this._afterModelChange(); });
-      inspector.append(title, nameLabel, nameInput, docLabel, docInput);
-    } else if (relModel) {
-      const title = el('div', 'am-inspector-title'); title.textContent = humanize(relModel.type);
-      const nameLabel = el('label', 'am-field-label'); nameLabel.textContent = 'Label';
-      const nameInput = el('input', 'am-field-input');
-      nameInput.placeholder = 'Unlabeled';
-      nameInput.value = relModel.name || '';
-      nameInput.addEventListener('input', () => { relModel.name = nameInput.value; this.renderer.renderEdge(relModel); });
-      nameInput.addEventListener('change', () => this._afterModelChange());
-      const rerouteBtn = el('button', 'am-btn'); rerouteBtn.textContent = 'Auto-route again';
-      rerouteBtn.title = 'Clear manual bend/hinge points and let the router pick again';
-      rerouteBtn.addEventListener('click', () => this._rerouteRelationship(relModel));
-      inspector.append(title, nameLabel, nameInput, rerouteBtn);
-    }
+    renderInspectorDom(this.inspector!, this._currentSelection(), {
+      onEdit: (id, field, value, final) => this._applyInspectorEdit(id, field, value, final),
+      onReroute: (id) => this._applyInspectorReroute(id),
+    });
   }
 
   private _rerouteRelationship(relModel: ArchimateRelationship): void {
@@ -1223,31 +382,23 @@ export class ArchimateDesigner {
     this._afterModelChange();
   }
 
+  /** The current selection, shaped for InspectorDom/archiSelectionChanged — null unless exactly one element or relationship is selected. */
+  private _currentSelection(): Selection {
+    if (this.selected.size !== 1) return null;
+    const id = [...this.selected][0];
+    const elModel = this.model.getElement(id);
+    const relModel = this.model.relationships.get(id);
+    if (elModel) return { kind: 'element', id, type: elModel.type, name: elModel.name, documentation: elModel.documentation || '' };
+    if (relModel) return { kind: 'relationship', id, type: relModel.type, name: relModel.name || '' };
+    return null;
+  }
+
   // ================= inspector sync with an external host (VS Code sidebar Inspector) =================
   // Mirrors the palette's hostApi relay: the Inspector lives in its own
   // WebviewView and can't read this.model directly, so the extension host
   // relays the current selection over to it, and relays its edits back.
   private _notifySelectionChanged(): void {
-    if (this.selected.size !== 1) {
-      this.hostApi?.postMessage({ type: 'archiSelectionChanged', selection: null });
-      return;
-    }
-    const id = [...this.selected][0];
-    const elModel = this.model.getElement(id);
-    const relModel = this.model.relationships.get(id);
-    if (elModel) {
-      this.hostApi?.postMessage({
-        type: 'archiSelectionChanged',
-        selection: { kind: 'element', id, type: elModel.type, name: elModel.name, documentation: elModel.documentation || '' },
-      });
-    } else if (relModel) {
-      this.hostApi?.postMessage({
-        type: 'archiSelectionChanged',
-        selection: { kind: 'relationship', id, type: relModel.type, name: relModel.name || '' },
-      });
-    } else {
-      this.hostApi?.postMessage({ type: 'archiSelectionChanged', selection: null });
-    }
+    this.hostApi?.postMessage({ type: 'archiSelectionChanged', selection: this._currentSelection() });
   }
 
   private _applyInspectorEdit(id: string, field: string, value: string, final: boolean): void {
@@ -1428,10 +579,10 @@ export class ArchimateDesigner {
     const elObj = this.model.addElement({ type, x, y, name: opts.name || humanize(type), id: opts.id });
     this.renderer.renderElement(elObj);
     if (canNest(type)) {
-      const target = this._hitTestContainerFor(elObj.id, elObj.x + elObj.w / 2, elObj.y + elObj.h / 2, new Set());
+      const target = this.interactions.hitTestContainerFor(elObj.id, elObj.x + elObj.w / 2, elObj.y + elObj.h / 2, new Set());
       if (target) {
-        this._nestChild(target, elObj);
-        this._offerNestingRelationships([{ parent: target, child: elObj }]);
+        this.interactions.nestChild(target, elObj);
+        this.interactions.offerNestingRelationships([{ parent: target, child: elObj }]);
       }
     }
     this._afterModelChange();
@@ -1459,7 +610,7 @@ export class ArchimateDesigner {
     this._afterModelChange();
   }
 
-  private _afterModelChange(): void {
+  _afterModelChange(): void {
     if (this.changeTimer) clearTimeout(this.changeTimer);
     this.changeTimer = setTimeout(() => {
       try { localStorage.setItem(this.storageKey + ':autosave', JSON.stringify(this.model.toJSON())); } catch { /* storage unavailable */ }
@@ -1510,14 +661,14 @@ export class ArchimateDesigner {
     
     let path = this.currentViewPath;
     if (!path) {
-      const tree = await this._loadTree();
+      const tree = await this.viewsPanelCtrl.loadTree();
       const rootViewNames = new Set(tree.filter(e => e.type === 'view' && !e.parentPath).map(e => e.name));
-      path = this._uniqueName('View', rootViewNames);
+      path = this.viewsPanelCtrl.uniqueName('View', rootViewNames);
     }
     await this.storage.writeView(path, json);
     this.currentViewPath = path;
     if (this.onSave) this.onSave({ ...json, viewPath: path });
-    await this._renderViewsList();
+    await this.viewsPanelCtrl.renderList();
     this._flashStatus(`Saved "${path.split('/').pop()}".`);
     return json;
   }
@@ -1549,7 +700,7 @@ export class ArchimateDesigner {
       try {
         this.load(JSON.parse(reader.result as string));
         this.currentViewPath = null;
-        this._renderViewsList();
+        this.viewsPanelCtrl.renderList();
         this._flashStatus('Imported. Click Save to add it to your views.');
       } catch (err) { this._flashStatus('Import failed: ' + (err as Error).message); }
     };
@@ -1557,7 +708,7 @@ export class ArchimateDesigner {
     (e.target as HTMLInputElement).value = '';
   }
 
-  private _flashStatus(msg: string): void {
+  _flashStatus(msg: string): void {
     this.statusEl.textContent = msg;
     clearTimeout(this.statusTimer);
     this.statusTimer = setTimeout(() => this._updateArmedStatus(), 2400);
