@@ -150,6 +150,8 @@ export interface ArchimateElementProps {
   w?: number;
   h?: number;
   documentation?: string;
+  /** id of the element this one is nested inside (visual containment), or null/undefined if top-level. */
+  parentId?: string | null;
 }
 
 export class ArchimateElement {
@@ -161,8 +163,9 @@ export class ArchimateElement {
   w: number;
   h: number;
   documentation: string;
+  parentId: string | null;
 
-  constructor({ id, type, name, x = 0, y = 0, w = 140, h = 55, documentation = '' }: ArchimateElementProps) {
+  constructor({ id, type, name, x = 0, y = 0, w = 140, h = 55, documentation = '', parentId = null }: ArchimateElementProps) {
     if (!ELEMENT_TYPES[type]) throw new Error(`Unknown ArchiMate element type: ${type}`);
     this.id = id || nextId('elem');
     this.type = type;
@@ -172,6 +175,7 @@ export class ArchimateElement {
     this.w = w;
     this.h = h;
     this.documentation = documentation;
+    this.parentId = parentId ?? null;
   }
   get layer(): LayerKey { return ELEMENT_TYPES[this.type].layer as LayerKey; }
   bounds(): Bounds { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
@@ -238,9 +242,29 @@ export class ArchimateModel {
     for (const [rid, rel] of this.relationships) {
       if (rel.source === id || rel.target === id) this.relationships.delete(rid);
     }
+    // Nesting is a view-level convenience, not itself a semantic relationship,
+    // so removing a container just releases its children back to top level
+    // instead of deleting them too.
+    for (const child of this.elements.values()) {
+      if (child.parentId === id) child.parentId = null;
+    }
   }
   removeRelationship(id: string): void { this.relationships.delete(id); }
   getElement(id: string): ArchimateElement | undefined { return this.elements.get(id); }
+  getChildren(parentId: string): ArchimateElement[] {
+    return [...this.elements.values()].filter(e => e.parentId === parentId);
+  }
+  /** True if `id` is nested (directly or transitively) inside `ancestorId`. */
+  isDescendantOf(id: string, ancestorId: string): boolean {
+    const seen = new Set<string>();
+    let cur = this.elements.get(id)?.parentId ?? null;
+    while (cur && !seen.has(cur)) {
+      if (cur === ancestorId) return true;
+      seen.add(cur);
+      cur = this.elements.get(cur)?.parentId ?? null;
+    }
+    return false;
+  }
 
   toJSON(): ModelJSON {
     return {

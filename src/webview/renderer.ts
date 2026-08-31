@@ -357,6 +357,29 @@ export class Renderer {
     this.edgeDom.clear();
     for (const el of this.model.elements.values()) this.renderElement(el);
     for (const rel of this.model.relationships.values()) this.renderEdge(rel);
+    this.reorderByContainment();
+  }
+
+  // Keeps nested (child) elements drawn on top of the container they're
+  // nested inside, by re-appending each element's <g> in ascending
+  // parent-chain depth order (SVG paints later siblings on top).
+  reorderByContainment(): void {
+    const depthOf = (id: string): number => {
+      let depth = 0;
+      let cur = this.model.getElement(id);
+      const seen = new Set<string>();
+      while (cur?.parentId && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        cur = this.model.getElement(cur.parentId);
+        depth++;
+      }
+      return depth;
+    };
+    const sorted = [...this.model.elements.values()].sort((a, b) => depthOf(a.id) - depthOf(b.id));
+    for (const elObj of sorted) {
+      const g = this.elementDom.get(elObj.id);
+      if (g) this.nodeLayer.appendChild(g);
+    }
   }
 
   renderElement(el: ArchimateElement): void {

@@ -6,6 +6,7 @@ import { computeMoveSnap, computeResizedBox, enforceMinSize, computeResizeSnap, 
 import { LocalStorageAdapter } from './storage/LocalStorageAdapter.js';
 import type { StorageAdapter, TreeEntry, ViewData } from './storage/StorageAdapter.js';
 import { PALETTE_GROUPS, RELATIONSHIP_LIST, humanize } from './paletteData.js';
+import { legalNestingRelationships, canNest, NestingRelationOption } from './relationshipRules.js';
 
 const GRID_SIZE = 10;
 const GUIDE_SNAP_PX = 6; // screen pixels; converted to world units by dividing by zoom
@@ -781,9 +782,12 @@ export class ArchimateDesigner {
     if (!this.selected.has(id) || this.selected.size <= 1) this._setSelection(new Set([id]));
 
     // Move every selected element together, keyed off the one that was
-    // actually grabbed (its box drives alignment-guide snapping).
-    const movingIds = [...this.selected].filter(sid => this.model.elements.has(sid));
-    if (!movingIds.includes(id)) movingIds.push(id);
+    // actually grabbed (its box drives alignment-guide snapping). Nested
+    // children move along with their container even when not individually
+    // selected.
+    const baseIds = [...this.selected].filter(sid => this.model.elements.has(sid));
+    if (!baseIds.includes(id)) baseIds.push(id);
+    const movingIds = this._expandWithDescendants(baseIds);
     const movingSet = new Set(movingIds);
     const starts = new Map(movingIds.map(mid => {
       const m = this.model.getElement(mid)!;
@@ -793,6 +797,7 @@ export class ArchimateDesigner {
     const others = [...this.model.elements.values()].filter(o => !movingSet.has(o.id)).map(o => o.bounds());
     const startX = e.clientX, startY = e.clientY;
     let moved = false;
+    let hoverContainerId: string | null = null;
     const move = (ev: PointerEvent) => {
       const dx = (ev.clientX - startX) / this.zoom;
       const dy = (ev.clientY - startY) / this.zoom;
@@ -810,15 +815,201 @@ export class ArchimateDesigner {
         this.renderer.rerouteConnected(mid);
       }
       this.renderer.showGuides(snap.guides);
+
+      // Highlight a candidate container under the grabbed element, mirroring
+      // the blue "drop into me" highlight described for Archi's container
+      // elements.
+      const newHoverId = canNest(primary.type)
+        ? this._hitTestContainerFor(id, primary.x + primary.w / 2, primary.y + primary.h / 2, movingSet)?.id ?? null
+        : null;
+      if (newHoverId !== hoverContainerId) {
+        if (hoverContainerId) this.renderer.elementDom.get(hoverContainerId)?.classList.remove('am-nest-target');
+        if (newHoverId) this.renderer.elementDom.get(newHoverId)?.classList.add('am-nest-target');
+        hoverContainerId = newHoverId;
+      }
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       this.renderer.clearGuides();
-      if (moved) this._afterModelChange();
+      if (hoverContainerId) this.renderer.elementDom.get(hoverContainerId)?.classList.remove('am-nest-target');
+      if (moved) {
+        this._resolveNestingAfterMove(movingIds);
+        this._afterModelChange();
+      }
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+  }
+
+  // Every element nested (directly or transitively) inside one of `ids`,
+  // plus `ids` themselves — used so dragging a container carries its
+  // children along even when they aren't individually selected.
+  private _expandWithDescendants(ids: string[]): string[] {
+    const result = new Set(ids);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const elObj of this.model.elements.values()) {
+        if (elObj.parentId && result.has(elObj.parentId) && !result.has(elObj.id)) {
+          result.add(elObj.id);
+          changed = true;
+        }
+      }
+    }
+    return [...result];
+  }
+
+  // Topmost element (excluding `excludeIds` and any of `elId`'s own
+  // descendants, to avoid nesting cycles) whose bounds contain (x, y).
+  private _hitTestContainerFor(elId: string, x: number, y: number, excludeIds: Set<string>): ArchimateElement | null {
+    let best: ArchimateElement | null = null;
+    for (const cand of this.model.elements.values()) {
+      if (cand.id === elId || excludeIds.has(cand.id)) continue;
+      if (!canNest(cand.type)) continue;
+      if (this.model.isDescendantOf(cand.id, elId)) continue;
+      const b = cand.bounds();
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) best = cand;
+    }
+    return best;
+  }
+
+  // Recursively moves an element and everything nested inside it by the
+  // same delta, keeping a container's whole subtree visually attached.
+  private _moveSubtree(id: string, dx: number, dy: number): void {
+    if (!dx && !dy) return;
+    const elObj = this.model.getElement(id);
+    if (!elObj) return;
+    elObj.x += dx;
+    elObj.y += dy;
+    this.renderer.moveElementDom(elObj);
+    this.renderer.rerouteConnected(id);
+    for (const child of this.model.getChildren(id)) this._moveSubtree(child.id, dx, dy);
+  }
+
+  // Makes `child` a visual child of `parent`: fits it inside the parent's
+  // box (growing the parent if it doesn't already fit) and records the
+  // containment. Mirrors Archi's "Container Elements" nesting — this alone
+  // does not create a semantic relationship, see _offerNestingRelationships.
+  private _nestChild(parent: ArchimateElement, child: ArchimateElement): void {
+    const PAD = 10, HEADER = 26;
+    const siblings = this.model.getChildren(parent.id).filter(c => c.id !== child.id);
+    const fits = child.x >= parent.x + PAD && child.x + child.w <= parent.x + parent.w - PAD &&
+      child.y >= parent.y + HEADER && child.y + child.h <= parent.y + parent.h - PAD;
+    const targetX = fits ? child.x : parent.x + PAD;
+    const targetY = fits
+      ? child.y
+      : (siblings.length ? siblings.reduce((m, c) => Math.max(m, c.y + c.h), parent.y + HEADER) + PAD : parent.y + HEADER);
+    const neededRight = targetX + child.w + PAD;
+    const neededBottom = targetY + child.h + PAD;
+    if (neededRight > parent.x + parent.w) parent.w = neededRight - parent.x;
+    if (neededBottom > parent.y + parent.h) parent.h = neededBottom - parent.y;
+    this.renderer.updateElementGeometry(parent);
+    this.renderer.rerouteConnected(parent.id);
+    child.parentId = parent.id;
+    this._moveSubtree(child.id, targetX - child.x, targetY - child.y);
+    this.renderer.reorderByContainment();
+  }
+
+  // After a drag ends, checks whether any of the top-level moved elements
+  // (i.e. not ones just carried along as a descendant of another mover)
+  // landed on/off a container, and applies the resulting nesting.
+  private _resolveNestingAfterMove(movingIds: string[]): void {
+    const movingSet = new Set(movingIds);
+    const pendingPairs: { parent: ArchimateElement; child: ArchimateElement }[] = [];
+    for (const id of movingIds) {
+      const elObj = this.model.getElement(id);
+      if (!elObj || !canNest(elObj.type)) continue;
+      if (elObj.parentId && movingSet.has(elObj.parentId)) continue; // moving with its own container already
+      const cx = elObj.x + elObj.w / 2, cy = elObj.y + elObj.h / 2;
+      const target = this._hitTestContainerFor(id, cx, cy, movingSet);
+      if (target && target.id !== elObj.parentId) {
+        pendingPairs.push({ parent: target, child: elObj });
+      } else if (!target && elObj.parentId) {
+        const oldParent = this.model.getElement(elObj.parentId);
+        const stillInside = !!oldParent && elObj.x >= oldParent.x && elObj.x + elObj.w <= oldParent.x + oldParent.w &&
+          elObj.y >= oldParent.y && elObj.y + elObj.h <= oldParent.y + oldParent.h;
+        if (!stillInside) elObj.parentId = null;
+      }
+    }
+    for (const { parent, child } of pendingPairs) this._nestChild(parent, child);
+    if (pendingPairs.length) this._offerNestingRelationships(pendingPairs);
+  }
+
+  // Offers to create the ArchiMate relationship(s) implied by one or more
+  // fresh nestings. Pairs with only the generic Association fallback legal
+  // are created silently; pairs with a real choice get a picker dialog
+  // (mirrors Archi's "Dialog to create a new nested relationship").
+  private _offerNestingRelationships(pairs: { parent: ArchimateElement; child: ArchimateElement }[]): void {
+    const rows = pairs
+      .map(p => ({ parent: p.parent, child: p.child, options: legalNestingRelationships(p.parent.type, p.child.type) }))
+      .filter(r => r.options.length > 0);
+    const dialogRows: typeof rows = [];
+    for (const row of rows) {
+      if (row.options.length <= 1) {
+        const opt = row.options[0];
+        if (opt) this._applyNestingRelation(row.parent, row.child, opt);
+      } else {
+        dialogRows.push(row);
+      }
+    }
+    if (dialogRows.length) this._showNestingDialog(dialogRows);
+  }
+
+  private _applyNestingRelation(parent: ArchimateElement, child: ArchimateElement, opt: NestingRelationOption): void {
+    const source = opt.direction === 'forward' ? parent : child;
+    const target = opt.direction === 'forward' ? child : parent;
+    this.addRelationship(opt.type, source.id, target.id);
+  }
+
+  private _showNestingDialog(rows: { parent: ArchimateElement; child: ArchimateElement; options: NestingRelationOption[] }[]): void {
+    const overlay = el('div', 'am-modal-overlay');
+    const modal = el('div', 'am-modal');
+    const title = el('div', 'am-modal-title');
+    title.textContent = rows.length === 1 ? 'Create a relationship?' : 'Create relationships?';
+    const body = el('div', 'am-modal-body');
+    const rowSelects: { select: HTMLSelectElement; parent: ArchimateElement; child: ArchimateElement }[] = [];
+    for (const row of rows) {
+      const rowEl = el('div', 'am-nest-row');
+      const label = el('span', 'am-nest-row-label');
+      label.textContent = `${row.child.name || humanize(row.child.type)} → ${row.parent.name || humanize(row.parent.type)}`;
+      const select = el('select', 'am-nest-row-select');
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '(none)';
+      select.appendChild(noneOpt);
+      const defaultOpt = row.options.find(o => o.type !== 'Association') || row.options[0];
+      for (const opt of row.options) {
+        const optionEl = document.createElement('option');
+        optionEl.value = `${opt.type}|${opt.direction}`;
+        optionEl.textContent = humanize(opt.type) + (opt.direction === 'reverse' ? ' (reverse)' : '');
+        if (defaultOpt && opt.type === defaultOpt.type && opt.direction === defaultOpt.direction) optionEl.selected = true;
+        select.appendChild(optionEl);
+      }
+      rowEl.append(label, select);
+      body.appendChild(rowEl);
+      rowSelects.push({ select, parent: row.parent, child: row.child });
+    }
+    const actions = el('div', 'am-modal-actions');
+    const cancelBtn = el('button', 'am-btn');
+    cancelBtn.textContent = 'Cancel';
+    const createBtn = el('button', 'am-btn am-btn-primary');
+    createBtn.textContent = rows.length === 1 ? 'Create' : 'Create Selected';
+    const close = () => overlay.remove();
+    cancelBtn.addEventListener('click', close);
+    createBtn.addEventListener('click', () => {
+      for (const { select, parent, child } of rowSelects) {
+        if (!select.value) continue;
+        const [type, direction] = select.value.split('|') as [RelationshipType, 'forward' | 'reverse'];
+        this._applyNestingRelation(parent, child, { type, direction });
+      }
+      close();
+    });
+    actions.append(cancelBtn, createBtn);
+    modal.append(title, body, actions);
+    overlay.appendChild(modal);
+    overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(); });
+    document.body.appendChild(overlay);
   }
 
   private _onEdgeClick(e: PointerEvent, id: string): void {
@@ -1236,6 +1427,13 @@ export class ArchimateDesigner {
   addElement(type: ElementType, x: number, y: number, opts: { name?: string; id?: string } = {}): ArchimateElement {
     const elObj = this.model.addElement({ type, x, y, name: opts.name || humanize(type), id: opts.id });
     this.renderer.renderElement(elObj);
+    if (canNest(type)) {
+      const target = this._hitTestContainerFor(elObj.id, elObj.x + elObj.w / 2, elObj.y + elObj.h / 2, new Set());
+      if (target) {
+        this._nestChild(target, elObj);
+        this._offerNestingRelationships([{ parent: target, child: elObj }]);
+      }
+    }
     this._afterModelChange();
     return elObj;
   }
