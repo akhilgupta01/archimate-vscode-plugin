@@ -253,7 +253,7 @@ function nearestIdx(arr: number[], v: number): number {
   return best;
 }
 
-function simplifyCollinear(pts: Point[]): Point[] {
+export function simplifyCollinear(pts: Point[]): Point[] {
   if (pts.length < 3) return pts;
   const out = [pts[0]];
   for (let i = 1; i < pts.length - 1; i++) {

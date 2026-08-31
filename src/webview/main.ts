@@ -3,7 +3,7 @@
 // development without launching VS Code, by preview/index.html directly.
 
 import { ArchimateDesigner } from "./designer.js";
-import { VSCodeAdapter } from "./storage/VSCodeAdapter.js";
+import { VSCodeAdapter, VsCodeApi } from "./storage/VSCodeAdapter.js";
 import { LocalStorageAdapter } from "./storage/LocalStorageAdapter.js";
 import type {
   StorageAdapter,
@@ -12,12 +12,19 @@ import type {
 } from "./storage/StorageAdapter.js";
 import type { ElementType, RelationshipType } from "./model.js";
 
-function inVsCodeWebview(): boolean {
-  return typeof (window as any).acquireVsCodeApi === "function";
-}
+declare function acquireVsCodeApi(): VsCodeApi;
 
-const storage: StorageAdapter = inVsCodeWebview()
-  ? new VSCodeAdapter()
+// acquireVsCodeApi() may only be called once per webview session, and both
+// the storage adapter (RPC to the extension host) and the designer (palette
+// arm/disarm relay, see ArchimateDesignerOptions.hostApi) need it, so it's
+// acquired exactly once here and shared.
+const vscodeApi: VsCodeApi | null =
+  typeof (window as any).acquireVsCodeApi === "function"
+    ? acquireVsCodeApi()
+    : null;
+
+const storage: StorageAdapter = vscodeApi
+  ? new VSCodeAdapter(vscodeApi)
   : new LocalStorageAdapter({ storageKey: "archimate-preview" });
 
 const app = document.getElementById("app");
@@ -25,6 +32,7 @@ if (!app) throw new Error("#app root not found");
 
 const designer = new ArchimateDesigner(app, {
   storage,
+  hostApi: vscodeApi,
   onSave: (json: ViewData & { viewPath: string }) =>
     console.log("Saved view:", json.viewPath),
 });

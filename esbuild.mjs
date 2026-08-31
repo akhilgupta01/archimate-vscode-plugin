@@ -33,23 +33,49 @@ const webviewConfig = {
   logLevel: 'info',
 };
 
+const paletteViewConfig = {
+  entryPoints: ['src/webview/paletteMain.ts'],
+  bundle: true,
+  outfile: 'dist/palette.js',
+  platform: 'browser',
+  format: 'esm',
+  target: 'es2022',
+  sourcemap: true,
+  logLevel: 'info',
+};
+
+const inspectorViewConfig = {
+  entryPoints: ['src/webview/inspectorMain.ts'],
+  bundle: true,
+  outfile: 'dist/inspector.js',
+  platform: 'browser',
+  format: 'esm',
+  target: 'es2022',
+  sourcemap: true,
+  logLevel: 'info',
+};
+
 function copyAssets() {
   cpSync('src/webview/style.css', 'dist/webview.css');
   cpSync('src/webview/assets', 'dist/assets', { recursive: true });
 }
 
 if (watch) {
-  const [extCtx, webCtx] = await Promise.all([
+  const [extCtx, webCtx, paletteCtx, inspectorCtx] = await Promise.all([
     esbuild.context(extensionConfig),
     esbuild.context(webviewConfig),
+    esbuild.context(paletteViewConfig),
+    esbuild.context(inspectorViewConfig),
   ]);
   copyAssets();
-  await Promise.all([extCtx.watch(), webCtx.watch()]);
+  await Promise.all([extCtx.watch(), webCtx.watch(), paletteCtx.watch(), inspectorCtx.watch()]);
   console.log('esbuild watching for changes...');
 } else {
   await Promise.all([
     esbuild.build(extensionConfig),
     esbuild.build(webviewConfig),
+    esbuild.build(paletteViewConfig),
+    esbuild.build(inspectorViewConfig),
   ]);
   copyAssets();
   console.log('Build complete.');

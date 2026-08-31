@@ -1,26 +1,19 @@
-import { ArchimateModel, ArchimateElement, ArchimateRelationship, ELEMENT_TYPES, RELATIONSHIP_TYPES, LAYERS, ElementType, RelationshipType, LayerKey, ModelJSON } from './model.js';
+import { ArchimateModel, ArchimateElement, ArchimateRelationship, ELEMENT_TYPES, LAYERS, ElementType, RelationshipType, ModelJSON } from './model.js';
 import { Renderer } from './renderer.js';
 import { elementIcon, relationshipIcon } from './icons.js';
-import { snappedPerimeterPoint } from './router.js';
+import { snappedPerimeterPoint, simplifyCollinear, nearestPerimeterPoint } from './router.js';
 import { computeMoveSnap, computeResizedBox, enforceMinSize, computeResizeSnap, ResizeHandle } from './snap.js';
 import { LocalStorageAdapter } from './storage/LocalStorageAdapter.js';
 import type { StorageAdapter, TreeEntry, ViewData } from './storage/StorageAdapter.js';
+import { PALETTE_GROUPS, RELATIONSHIP_LIST, humanize } from './paletteData.js';
 
 const GRID_SIZE = 10;
 const GUIDE_SNAP_PX = 6; // screen pixels; converted to world units by dividing by zoom
 
-const PALETTE_GROUPS: { layer: LayerKey; types: ElementType[] }[] = [
-  { layer: 'strategy', types: ['Resource', 'Capability', 'CourseOfAction', 'ValueStream'] },
-  { layer: 'business', types: ['BusinessActor', 'BusinessRole', 'BusinessCollaboration', 'BusinessInterface', 'BusinessProcess', 'BusinessFunction', 'BusinessInteraction', 'BusinessEvent', 'BusinessService', 'BusinessObject', 'Contract', 'Representation', 'Product'] },
-  { layer: 'application', types: ['ApplicationComponent', 'ApplicationCollaboration', 'ApplicationInterface', 'ApplicationFunction', 'ApplicationInteraction', 'ApplicationProcess', 'ApplicationEvent', 'ApplicationService', 'DataObject'] },
-  { layer: 'technology', types: ['Node', 'Device', 'SystemSoftware', 'TechnologyCollaboration', 'TechnologyInterface', 'Path', 'CommunicationNetwork', 'TechnologyFunction', 'TechnologyProcess', 'TechnologyInteraction', 'TechnologyEvent', 'TechnologyService', 'Artifact', 'Equipment', 'Facility', 'DistributionNetwork', 'Material'] },
-  { layer: 'motivation', types: ['Stakeholder', 'Driver', 'Assessment', 'Goal', 'Outcome', 'Principle', 'Requirement', 'Constraint', 'Meaning', 'Value'] },
-  { layer: 'implementation', types: ['WorkPackage', 'Deliverable', 'ImplementationEvent', 'Plateau', 'Gap'] },
-  { layer: 'other', types: ['Grouping', 'Location', 'Junction'] },
-];
-const RELATIONSHIP_LIST = Object.keys(RELATIONSHIP_TYPES) as RelationshipType[];
-
-function humanize(type: string): string { return type.replace(/([a-z])([A-Z])/g, '$1 $2'); }
+function clampNum(v: number, lo: number, hi: number): number {
+  if (lo > hi) return (lo + hi) / 2;
+  return Math.min(Math.max(v, lo), hi);
+}
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, attrs: Record<string, string> = {}): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -63,12 +56,25 @@ function fileGlyph(): SVGElement {
 interface ContextMenuItem { label: string; action: () => void; disabled?: boolean; }
 type DropTarget = { type: 'folder'; path: string } | { type: 'root' };
 
+/** Minimal shape of the object VS Code's acquireVsCodeApi() returns — just enough to post/receive notifications outside the storage RPC channel. */
+export interface HostApi { postMessage(message: unknown): void; }
+
 export interface ArchimateDesignerOptions {
   model?: ArchimateModel;
   onSave?: (json: ViewData & { viewPath: string }) => void;
   storageKey?: string;
   /** Path-addressed adapter (see src/webview/storage/*.ts); defaults to LocalStorageAdapter. */
   storage?: StorageAdapter;
+  /**
+   * When set, the designer assumes a separate host-provided palette (the VS
+   * Code sidebar view) is arming tools via postMessage, so it skips building
+   * its own embedded palette panel and instead listens for `archiToolArm`
+   * messages, echoing armed/cleared state back via `archiToolArmedChanged`
+   * so the sidebar can keep its own highlight in sync. Omit to keep the
+   * classic embedded drag-and-drop palette (used by the dev-preview harness,
+   * where there is no separate VS Code sidebar to drive it).
+   */
+  hostApi?: HostApi | null;
 }
 
 export class ArchimateDesigner {
@@ -81,6 +87,7 @@ export class ArchimateDesigner {
   pan = { x: 40, y: 40 };
   selected = new Set<string>();
   activeRelType: RelationshipType | null = null;
+  armedElementType: ElementType | null = null;
   pendingSource: string | null = null;
   currentViewPath: string | null = null;
   paletteCollapsed = false;
@@ -90,18 +97,21 @@ export class ArchimateDesigner {
   // DOM refs, assigned during _buildDom()
   private viewsPanel!: HTMLDivElement;
   private viewsList!: HTMLDivElement;
-  private rightDock!: HTMLDivElement;
-  private palette!: HTMLDivElement;
-  private inspector!: HTMLDivElement;
+  private rightDock?: HTMLDivElement;
+  private palette?: HTMLDivElement;
+  private inspector?: HTMLDivElement;
   private canvasWrap!: HTMLDivElement;
   private svg!: SVGSVGElement;
   private statusEl!: HTMLDivElement;
   private zoomLabel!: HTMLSpanElement;
-  private paletteScroll!: HTMLDivElement;
+  private paletteScroll?: HTMLDivElement;
 
+  private hostApi: HostApi | null = null;
+  private embeddedPalette = true;
   private expandedFolders: Set<string> | null = null;
   private treeCache: TreeEntry[] = [];
   private spaceDown = false;
+  private ctrlDown = false;
   private justDragged = false;
   private folderClickTimer: ReturnType<typeof setTimeout> | undefined;
   private viewClickTimer: ReturnType<typeof setTimeout> | undefined;
@@ -115,6 +125,8 @@ export class ArchimateDesigner {
     this.onSave = opts.onSave || null;
     this.storageKey = opts.storageKey || 'archimate-designer';
     this.storage = opts.storage || new LocalStorageAdapter({ storageKey: this.storageKey });
+    this.hostApi = opts.hostApi ?? null;
+    this.embeddedPalette = !this.hostApi;
 
     this._buildDom();
     this.renderer = new Renderer(this.svg, this.model, {
@@ -122,8 +134,18 @@ export class ArchimateDesigner {
       onEdgeClick: (e, id) => this._onEdgeClick(e, id),
       onHingePointerDown: (e, relId, end) => this._onHingePointerDown(e, relId, end),
       onResizeHandlePointerDown: (e, elId, handle) => this._onResizeHandlePointerDown(e, elId, handle),
+      onSegmentPointerDown: (e, relId, segIndex) => this._onSegmentPointerDown(e, relId, segIndex),
     });
     this._wireCanvasEvents();
+    if (this.hostApi) {
+      window.addEventListener('message', (ev: MessageEvent) => {
+        const d = ev.data;
+        if (!d) return;
+        if (d.type === 'archiToolArm') this._armTool(d.kind, d.archiType);
+        else if (d.type === 'archiInspectorEdit') this._applyInspectorEdit(d.id, d.field, d.value, d.final);
+        else if (d.type === 'archiInspectorReroute') this._applyInspectorReroute(d.id);
+      });
+    }
     this.renderer.fullRender();
     this._applyTransform();
     this._renderViewsList();
@@ -148,12 +170,18 @@ export class ArchimateDesigner {
     main.appendChild(canvasWrap);
     this.canvasWrap = canvasWrap;
 
-    this.rightDock = el('div', 'am-right-dock');
-    this._buildRightDock();
+    // In hostApi mode both the palette and inspector live in their own VS
+    // Code sidebar views (see paletteMain.ts / inspectorMain.ts), so there's
+    // nothing left to dock here — skip it entirely and let the canvas take
+    // the full width instead of reserving space for an empty dock.
+    if (this.embeddedPalette) {
+      this.rightDock = el('div', 'am-right-dock');
+      this._buildRightDock();
+    }
 
     // this.container.appendChild(this.viewsPanel); // Views panel removed
     this.container.appendChild(main);
-    this.container.appendChild(this.rightDock);
+    if (this.rightDock) this.container.appendChild(this.rightDock);
   }
 
   // ---------------- Views panel (left) ----------------
@@ -485,9 +513,13 @@ export class ArchimateDesigner {
     await this._renderViewsList();
   }
 
-  // ---------------- Right dock: palette + inspector ----------------
+  // ---------------- Right dock: embedded-mode-only palette + inspector ----------------
+  // (In hostApi mode both live in their own VS Code sidebar views instead —
+  // see _buildDom — so this whole method is only ever called in embedded/
+  // dev-preview mode, where this.rightDock is always set right before the call.)
   private _buildRightDock(): void {
-    this.rightDock.innerHTML = '';
+    const rightDock = this.rightDock!;
+    rightDock.innerHTML = '';
     const collapsedTab = el('button', 'am-dock-collapsed-tab', { title: 'Show palette' });
     collapsedTab.innerHTML = '<span>◂ Palette</span>';
     collapsedTab.addEventListener('click', () => this._setPaletteCollapsed(false));
@@ -495,35 +527,36 @@ export class ArchimateDesigner {
     const dockContent = el('div', 'am-dock-content');
     this.palette = el('div', 'am-palette');
     this._buildPalette();
+    dockContent.appendChild(this.palette);
     this.inspector = el('div', 'am-inspector');
     this._buildInspector();
-    dockContent.appendChild(this.palette);
     dockContent.appendChild(this.inspector);
 
-    this.rightDock.appendChild(collapsedTab);
-    this.rightDock.appendChild(dockContent);
+    rightDock.appendChild(collapsedTab);
+    rightDock.appendChild(dockContent);
     this._setPaletteCollapsed(false);
   }
 
   private _setPaletteCollapsed(collapsed: boolean): void {
     this.paletteCollapsed = collapsed;
-    this.rightDock.classList.toggle('am-collapsed', collapsed);
+    this.rightDock?.classList.toggle('am-collapsed', collapsed);
   }
 
   private _buildPalette(): void {
-    this.palette.innerHTML = '';
+    const palette = this.palette!;
+    palette.innerHTML = '';
     const header = el('div', 'am-panel-header');
     header.textContent = 'Palette';
     const collapseBtn = el('button', 'am-collapse-btn', { title: 'Collapse palette' });
     collapseBtn.textContent = '▸';
     collapseBtn.addEventListener('click', () => this._setPaletteCollapsed(true));
     header.appendChild(collapseBtn);
-    this.palette.appendChild(header);
+    palette.appendChild(header);
 
     const search = el('input', 'am-palette-search');
     search.placeholder = 'Filter…';
     search.addEventListener('input', () => this._filterPalette(search.value.trim().toLowerCase()));
-    this.palette.appendChild(search);
+    palette.appendChild(search);
 
     const scroll = el('div', 'am-palette-scroll');
 
@@ -566,17 +599,18 @@ export class ArchimateDesigner {
       scroll.appendChild(section);
     }
 
-    this.palette.appendChild(scroll);
+    palette.appendChild(scroll);
     this.paletteScroll = scroll;
   }
 
   private _filterPalette(q: string): void {
-    const items = this.paletteScroll.querySelectorAll<HTMLElement>('.am-icon-btn[data-type]');
+    const paletteScroll = this.paletteScroll!;
+    const items = paletteScroll.querySelectorAll<HTMLElement>('.am-icon-btn[data-type]');
     for (const item of items) {
       const label = item.title.toLowerCase();
       item.style.display = !q || label.includes(q) ? '' : 'none';
     }
-    for (const section of this.paletteScroll.querySelectorAll<HTMLElement>('.am-palette-section')) {
+    for (const section of paletteScroll.querySelectorAll<HTMLElement>('.am-palette-section')) {
       const typeItems = section.querySelectorAll<HTMLElement>('.am-icon-btn[data-type]');
       if (!typeItems.length) continue;
       const visible = [...typeItems].some(i => i.style.display !== 'none');
@@ -587,7 +621,9 @@ export class ArchimateDesigner {
 
   private _buildToolbar(toolbar: HTMLDivElement): void {
     const status = el('div', 'am-status');
-    status.textContent = 'Drag elements from the palette onto the canvas.';
+    status.textContent = this.embeddedPalette
+      ? 'Drag elements from the palette onto the canvas.'
+      : 'Select a tool from the Palette view, then click the canvas.';
     this.statusEl = status;
     const spacer = el('div', 'am-toolbar-spacer');
     const zoomOut = el('button', 'am-btn', { title: 'Zoom out' }); zoomOut.textContent = '−';
@@ -613,7 +649,7 @@ export class ArchimateDesigner {
   }
 
   private _buildInspector(): void {
-    this.inspector.innerHTML = '<div class="am-inspector-empty">Select an element or relationship to edit its properties.</div>';
+    this.inspector!.innerHTML = '<div class="am-inspector-empty">Select an element or relationship to edit its properties.</div>';
   }
 
   // ================= palette drag-to-create =================
@@ -657,15 +693,66 @@ export class ArchimateDesigner {
   // ================= relationship tool =================
   private _setRelationshipTool(type: RelationshipType, itemEl: HTMLElement): void {
     const already = this.activeRelType === type;
-    this.paletteScroll.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
+    this.paletteScroll?.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
     this.activeRelType = already ? null : type;
+    this.armedElementType = null;
     this.pendingSource = null;
-    if (this.activeRelType) {
-      itemEl.classList.add('am-active');
-      this.statusEl.textContent = `Click a source element, then a target element to draw a ${humanize(type)} relationship. Esc to cancel.`;
+    if (this.activeRelType) itemEl.classList.add('am-active');
+    this._updateArmedStatus();
+    this._notifyToolArmed();
+  }
+
+  // ================= tool arming from an external host (VS Code sidebar palette) =================
+  // Mirrors _setRelationshipTool/_startPaletteDrag for the case where the
+  // palette lives in a separate WebviewView and can't drag-and-drop onto
+  // this webview's canvas (VS Code webviews are isolated contexts), so it
+  // arms a tool by message instead; placing an element then happens on the
+  // next plain click on empty canvas (see _wireCanvasEvents).
+  private _armTool(kind: 'element' | 'relationship', archiType: string): void {
+    this.pendingSource = null;
+    if (kind === 'relationship') {
+      const type = archiType as RelationshipType;
+      this.activeRelType = this.activeRelType === type ? null : type;
+      this.armedElementType = null;
     } else {
-      this.statusEl.textContent = 'Drag elements from the palette onto the canvas.';
+      const type = archiType as ElementType;
+      this.armedElementType = this.armedElementType === type ? null : type;
+      this.activeRelType = null;
     }
+    this._updateArmedStatus();
+    this._notifyToolArmed();
+  }
+
+  /** Clears whatever tool is currently armed (relationship or element), embedded or host-driven. */
+  private _cancelActiveTool(): void {
+    this.activeRelType = null;
+    this.pendingSource = null;
+    this.armedElementType = null;
+    this.paletteScroll?.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
+    this._updateArmedStatus();
+    this._notifyToolArmed();
+  }
+
+  private _updateArmedStatus(): void {
+    this.svg.classList.toggle('am-place-cursor', !!this.armedElementType);
+    if (this.activeRelType) {
+      this.statusEl.textContent = `Click a source element, then a target element to draw a ${humanize(this.activeRelType)} relationship. Esc to cancel.`;
+    } else if (this.armedElementType) {
+      this.statusEl.textContent = `Click on the canvas to place a ${humanize(this.armedElementType)}. Esc to cancel.`;
+    } else {
+      this.statusEl.textContent = this.embeddedPalette
+        ? 'Drag elements from the palette onto the canvas.'
+        : 'Select a tool from the Palette view, then click the canvas.';
+    }
+  }
+
+  /** Tells the host (VS Code extension, relaying to the sidebar palette view) what's armed now, so its highlight stays in sync. Harmless no-op in embedded mode (no host). */
+  private _notifyToolArmed(): void {
+    this.hostApi?.postMessage({
+      type: 'archiToolArmedChanged',
+      kind: this.activeRelType ? 'relationship' : this.armedElementType ? 'element' : null,
+      archiType: this.activeRelType || this.armedElementType || null,
+    });
   }
 
   // ================= element interactions =================
@@ -679,11 +766,8 @@ export class ArchimateDesigner {
       } else {
         const type = this.activeRelType;
         const source = this.pendingSource;
-        this.pendingSource = null;
-        this.paletteScroll.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
-        this.activeRelType = null;
+        this._cancelActiveTool();
         if (source !== id) this.addRelationship(type, source, id);
-        this.statusEl.textContent = 'Drag elements from the palette onto the canvas.';
         this._setSelection(new Set());
       }
       return;
@@ -748,26 +832,61 @@ export class ArchimateDesigner {
     this._setSelection(new Set([id]));
   }
 
-  // Drag a connector's source/target hinge point along its element's
-  // boundary, snapping the position that runs along the edge to the grid.
+  // Returns the element under (x,y) in world space, excluding excludeId, or
+  // null if none — used to detect "drop this hinge onto a different
+  // element" while dragging. Picks the last (topmost-drawn) match.
+  private _hitTestElement(x: number, y: number, excludeId: string): ArchimateElement | null {
+    let best: ArchimateElement | null = null;
+    for (const el of this.model.elements.values()) {
+      if (el.id === excludeId) continue;
+      const b = el.bounds();
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) best = el;
+    }
+    return best;
+  }
+
+  // Drag a connector's source/target hinge point. While dragging, it slides
+  // along whichever element's boundary is currently under the pointer,
+  // snapped to the grid — normally that's the element it's already
+  // attached to (unchanged, matching the previous behavior), but dropping
+  // it directly onto a *different* element re-targets the connector to
+  // attach there instead (source/target reassigned). Dragging over empty
+  // space keeps it constrained to the originally-attached element.
   private _onHingePointerDown(e: PointerEvent, relId: string, end: 'source' | 'target'): void {
     e.preventDefault();
     const rel = this.model.relationships.get(relId);
     if (!rel) return;
-    const elId = end === 'source' ? rel.source : rel.target;
-    const elModel = this.model.getElement(elId);
-    if (!elModel) return;
+    const originalElId = end === 'source' ? rel.source : rel.target;
+    const otherEndElId = end === 'source' ? rel.target : rel.source;
+    const originalEl = this.model.getElement(originalElId);
+    if (!originalEl) return;
+    // Dragging the endpoint itself always means repositioning it — any
+    // previously-set manual bend shape was tailored to the old position and
+    // is now stale, even if it ends up back on the same element.
+    rel.bendpoints = null;
     this._setSelection(new Set([relId]));
+    let hoverTargetId: string | null = null;
     const move = (ev: PointerEvent) => {
       const world = this._clientToWorld(ev.clientX, ev.clientY);
-      const snapped = snappedPerimeterPoint(elModel.bounds(), world.x, world.y, GRID_SIZE);
+      const hit = this._hitTestElement(world.x, world.y, otherEndElId);
+      const attachEl = hit || originalEl;
+      const snapped = snappedPerimeterPoint(attachEl.bounds(), world.x, world.y, GRID_SIZE);
       const port = { side: snapped.side, t: snapped.t };
-      if (end === 'source') rel.sourcePort = port; else rel.targetPort = port;
+      if (end === 'source') { rel.source = attachEl.id; rel.sourcePort = port; }
+      else { rel.target = attachEl.id; rel.targetPort = port; }
+
+      const newHoverId = hit && hit.id !== originalElId ? hit.id : null;
+      if (newHoverId !== hoverTargetId) {
+        if (hoverTargetId) this.renderer.elementDom.get(hoverTargetId)?.classList.remove('am-hinge-target');
+        if (newHoverId) this.renderer.elementDom.get(newHoverId)?.classList.add('am-hinge-target');
+        hoverTargetId = newHoverId;
+      }
       this.renderer.renderEdge(rel);
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      if (hoverTargetId) this.renderer.elementDom.get(hoverTargetId)?.classList.remove('am-hinge-target');
       this._afterModelChange();
     };
     window.addEventListener('pointermove', move);
@@ -807,16 +926,70 @@ export class ArchimateDesigner {
     window.addEventListener('pointerup', up);
   }
 
+  // Drag one straight segment of a connector's route perpendicular to
+  // itself: both its endpoints shift together, so the segments on either
+  // side stretch to stay connected. If an endpoint is the source/target
+  // hinge itself, it slides along that element's boundary right along with
+  // the segment (clamped to the boundary, and rel.sourcePort/targetPort
+  // updated) instead of being left behind; otherwise it's a plain bend
+  // point and just moves freely. Converts the edge to a manually-bent route
+  // (relationship.bendpoints), same as hinge dragging.
+  private _onSegmentPointerDown(e: PointerEvent, relId: string, segIndex: number): void {
+    e.preventDefault();
+    const rel = this.model.relationships.get(relId);
+    if (!rel) return;
+    const basePts = this.renderer.lastPoints.get(relId);
+    if (!basePts || segIndex < 0 || segIndex + 1 > basePts.length - 1) return;
+    this._setSelection(new Set([relId]));
+    const a0 = basePts[segIndex], b0 = basePts[segIndex + 1];
+    const horizontal = a0.y === b0.y;
+    const isSourceEnd = segIndex === 0;
+    const isTargetEnd = segIndex + 1 === basePts.length - 1;
+    const sourceBox = isSourceEnd ? this.model.getElement(rel.source)?.bounds() : undefined;
+    const targetBox = isTargetEnd ? this.model.getElement(rel.target)?.bounds() : undefined;
+    const startWorld = this._clientToWorld(e.clientX, e.clientY);
+    const move = (ev: PointerEvent) => {
+      const world = this._clientToWorld(ev.clientX, ev.clientY);
+      const pts = basePts.map(p => ({ ...p }));
+      if (horizontal) {
+        let ny = Math.round((a0.y + (world.y - startWorld.y)) / GRID_SIZE) * GRID_SIZE;
+        if (sourceBox) ny = clampNum(ny, sourceBox.y, sourceBox.y + sourceBox.h);
+        if (targetBox) ny = clampNum(ny, targetBox.y, targetBox.y + targetBox.h);
+        pts[segIndex] = { x: a0.x, y: ny };
+        pts[segIndex + 1] = { x: b0.x, y: ny };
+      } else {
+        let nx = Math.round((a0.x + (world.x - startWorld.x)) / GRID_SIZE) * GRID_SIZE;
+        if (sourceBox) nx = clampNum(nx, sourceBox.x, sourceBox.x + sourceBox.w);
+        if (targetBox) nx = clampNum(nx, targetBox.x, targetBox.x + targetBox.w);
+        pts[segIndex] = { x: nx, y: a0.y };
+        pts[segIndex + 1] = { x: nx, y: b0.y };
+      }
+      if (sourceBox) { const np = nearestPerimeterPoint(sourceBox, pts[0].x, pts[0].y); rel.sourcePort = { side: np.side, t: np.t }; }
+      if (targetBox) { const np = nearestPerimeterPoint(targetBox, pts[pts.length - 1].x, pts[pts.length - 1].y); rel.targetPort = { side: np.side, t: np.t }; }
+      rel.bendpoints = simplifyCollinear(pts);
+      this.renderer.renderEdge(rel);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      this._afterModelChange();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
   private _setSelection(idSet: Set<string>): void {
     this.selected = idSet;
     this.renderer.setSelected(idSet);
-    this._renderInspector();
+    if (this.inspector) this._renderInspector();
+    if (this.hostApi) this._notifySelectionChanged();
   }
 
   private _renderInspector(): void {
-    this.inspector.innerHTML = '';
+    const inspector = this.inspector!;
+    inspector.innerHTML = '';
     if (this.selected.size !== 1) {
-      this.inspector.innerHTML = '<div class="am-inspector-empty">Select an element or relationship to edit its properties.</div>';
+      inspector.innerHTML = '<div class="am-inspector-empty">Select an element or relationship to edit its properties.</div>';
       return;
     }
     const id = [...this.selected][0];
@@ -826,45 +999,96 @@ export class ArchimateDesigner {
       const title = el('div', 'am-inspector-title'); title.textContent = humanize(elModel.type);
       const nameLabel = el('label', 'am-field-label'); nameLabel.textContent = 'Name';
       const nameInput = el('input', 'am-field-input');
+      nameInput.placeholder = 'Unnamed';
       nameInput.value = elModel.name;
       nameInput.addEventListener('input', () => { elModel.name = nameInput.value; this.renderer.updateElementLabel(elModel); });
       nameInput.addEventListener('change', () => this._afterModelChange());
       const docLabel = el('label', 'am-field-label'); docLabel.textContent = 'Documentation';
       const docInput = el('textarea', 'am-field-textarea');
+      docInput.placeholder = 'Add documentation…';
       docInput.value = elModel.documentation || '';
       docInput.addEventListener('change', () => { elModel.documentation = docInput.value; this._afterModelChange(); });
-      this.inspector.append(title, nameLabel, nameInput, docLabel, docInput);
+      inspector.append(title, nameLabel, nameInput, docLabel, docInput);
     } else if (relModel) {
       const title = el('div', 'am-inspector-title'); title.textContent = humanize(relModel.type);
       const nameLabel = el('label', 'am-field-label'); nameLabel.textContent = 'Label';
       const nameInput = el('input', 'am-field-input');
+      nameInput.placeholder = 'Unlabeled';
       nameInput.value = relModel.name || '';
       nameInput.addEventListener('input', () => { relModel.name = nameInput.value; this.renderer.renderEdge(relModel); });
       nameInput.addEventListener('change', () => this._afterModelChange());
       const rerouteBtn = el('button', 'am-btn'); rerouteBtn.textContent = 'Auto-route again';
       rerouteBtn.title = 'Clear manual bend/hinge points and let the router pick again';
-      rerouteBtn.addEventListener('click', () => {
-        relModel.bendpoints = null;
-        relModel.sourcePort = null;
-        relModel.targetPort = null;
-        this.renderer.renderEdge(relModel);
-        this._afterModelChange();
-      });
-      this.inspector.append(title, nameLabel, nameInput, rerouteBtn);
+      rerouteBtn.addEventListener('click', () => this._rerouteRelationship(relModel));
+      inspector.append(title, nameLabel, nameInput, rerouteBtn);
     }
+  }
+
+  private _rerouteRelationship(relModel: ArchimateRelationship): void {
+    relModel.bendpoints = null;
+    relModel.sourcePort = null;
+    relModel.targetPort = null;
+    this.renderer.renderEdge(relModel);
+    this._afterModelChange();
+  }
+
+  // ================= inspector sync with an external host (VS Code sidebar Inspector) =================
+  // Mirrors the palette's hostApi relay: the Inspector lives in its own
+  // WebviewView and can't read this.model directly, so the extension host
+  // relays the current selection over to it, and relays its edits back.
+  private _notifySelectionChanged(): void {
+    if (this.selected.size !== 1) {
+      this.hostApi?.postMessage({ type: 'archiSelectionChanged', selection: null });
+      return;
+    }
+    const id = [...this.selected][0];
+    const elModel = this.model.getElement(id);
+    const relModel = this.model.relationships.get(id);
+    if (elModel) {
+      this.hostApi?.postMessage({
+        type: 'archiSelectionChanged',
+        selection: { kind: 'element', id, type: elModel.type, name: elModel.name, documentation: elModel.documentation || '' },
+      });
+    } else if (relModel) {
+      this.hostApi?.postMessage({
+        type: 'archiSelectionChanged',
+        selection: { kind: 'relationship', id, type: relModel.type, name: relModel.name || '' },
+      });
+    } else {
+      this.hostApi?.postMessage({ type: 'archiSelectionChanged', selection: null });
+    }
+  }
+
+  private _applyInspectorEdit(id: string, field: string, value: string, final: boolean): void {
+    const elModel = this.model.getElement(id);
+    const relModel = this.model.relationships.get(id);
+    if (elModel && field === 'name') { elModel.name = value; this.renderer.updateElementLabel(elModel); }
+    else if (elModel && field === 'documentation') { elModel.documentation = value; }
+    else if (relModel && field === 'name') { relModel.name = value; this.renderer.renderEdge(relModel); }
+    if (final) this._afterModelChange();
+  }
+
+  private _applyInspectorReroute(id: string): void {
+    const relModel = this.model.relationships.get(id);
+    if (relModel) this._rerouteRelationship(relModel);
   }
 
   // ================= canvas-level events =================
   private _wireCanvasEvents(): void {
     this.svg.addEventListener('pointerdown', (e) => {
       if (e.target === this.svg || (e.target as Element).classList?.contains('am-viewport')) {
-        if (this.activeRelType) {
-          this.activeRelType = null; this.pendingSource = null;
-          this.paletteScroll.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
-          this.statusEl.textContent = 'Drag elements from the palette onto the canvas.';
+        if (this.armedElementType) {
+          const type = this.armedElementType;
+          const pt = this._clientToWorld(e.clientX, e.clientY);
+          this._cancelActiveTool();
+          this.addElement(type, pt.x - 70, pt.y - 27);
           return;
         }
-        if (e.button === 1 || this.spaceDown) { e.preventDefault(); this._startPan(e); return; }
+        if (this.activeRelType) {
+          this._cancelActiveTool();
+          return;
+        }
+        if (e.button === 1 || this.spaceDown || e.ctrlKey) { e.preventDefault(); this._startPan(e); return; }
         if (e.button !== 0) return;
         this._startMarquee(e);
       }
@@ -876,6 +1100,10 @@ export class ArchimateDesigner {
     }, { passive: false });
     this.svg.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      // On macOS, Control-click is translated into a right-click by the OS,
+      // so Ctrl+drag-to-pan also fires this event — ctrlKey here means it's
+      // that translation, not a genuine right-click, so skip the menu.
+      if (e.ctrlKey) return;
       this._showContextMenu(e.clientX, e.clientY, [
         { label: 'Select All', action: () => this.selectAll() },
         { label: 'Deselect All', action: () => this._setSelection(new Set()), disabled: !this.selected.size },
@@ -884,7 +1112,8 @@ export class ArchimateDesigner {
     });
     window.addEventListener('keydown', (e) => {
       const typing = ['INPUT', 'TEXTAREA'].includes((document.activeElement as HTMLElement)?.tagName);
-      if (e.code === 'Space' && !typing && !this.spaceDown) { this.spaceDown = true; this.svg.classList.add('am-space-pan'); }
+      if (e.code === 'Space' && !typing && !this.spaceDown) { this.spaceDown = true; this._updatePanCursor(); }
+      if (e.key === 'Control' && !typing && !this.ctrlDown) { this.ctrlDown = true; this._updatePanCursor(); }
       if (!this.container.contains(document.activeElement) && document.activeElement !== document.body) return;
       if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
@@ -896,15 +1125,25 @@ export class ArchimateDesigner {
         this.deleteSelected();
       }
       if (e.key === 'Escape') {
-        this.activeRelType = null; this.pendingSource = null;
-        this.paletteScroll.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
-        this.statusEl.textContent = 'Drag elements from the palette onto the canvas.';
+        this._cancelActiveTool();
         this._closeContextMenu();
       }
     });
     window.addEventListener('keyup', (e) => {
-      if (e.code === 'Space') { this.spaceDown = false; this.svg.classList.remove('am-space-pan'); }
+      if (e.code === 'Space') { this.spaceDown = false; this._updatePanCursor(); }
+      if (e.key === 'Control') { this.ctrlDown = false; this._updatePanCursor(); }
     });
+    // If the window loses focus (e.g. Cmd-Tab) while a modifier is held,
+    // there's no keyup to catch it — drop the stuck pan-cursor state.
+    window.addEventListener('blur', () => {
+      this.spaceDown = false;
+      this.ctrlDown = false;
+      this._updatePanCursor();
+    });
+  }
+
+  private _updatePanCursor(): void {
+    this.svg.classList.toggle('am-pan-cursor', this.spaceDown || this.ctrlDown);
   }
 
   selectAll(): void {
@@ -1123,6 +1362,6 @@ export class ArchimateDesigner {
   private _flashStatus(msg: string): void {
     this.statusEl.textContent = msg;
     clearTimeout(this.statusTimer);
-    this.statusTimer = setTimeout(() => { this.statusEl.textContent = 'Drag elements from the palette onto the canvas.'; }, 2400);
+    this.statusTimer = setTimeout(() => this._updateArmedStatus(), 2400);
   }
 }

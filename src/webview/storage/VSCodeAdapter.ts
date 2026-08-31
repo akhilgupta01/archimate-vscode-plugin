@@ -6,16 +6,20 @@
 import type { StorageAdapter, ViewData, TreeEntry, Settings } from './StorageAdapter.js';
 import type { RpcRequest, RpcResponse, RpcMethod } from '../../protocol.js';
 
-interface VsCodeApi { postMessage(message: unknown): void; }
-declare function acquireVsCodeApi(): VsCodeApi;
+export interface VsCodeApi { postMessage(message: unknown): void; }
 
 export class VSCodeAdapter implements StorageAdapter {
   private vscode: VsCodeApi;
   private seq = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
-  constructor() {
-    this.vscode = acquireVsCodeApi();
+  // Takes the already-acquired vscode API object rather than calling
+  // acquireVsCodeApi() itself — that function may only be called once per
+  // webview session, and main.ts also hands it to ArchimateDesigner (to
+  // relay palette-arming messages), so main.ts acquires it exactly once and
+  // shares it.
+  constructor(vscode: VsCodeApi) {
+    this.vscode = vscode;
     window.addEventListener('message', (event: MessageEvent<RpcResponse>) => {
       const { id, ok, result, error } = event.data || ({} as RpcResponse);
       const entry = this.pending.get(id);

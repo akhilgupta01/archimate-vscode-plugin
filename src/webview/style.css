@@ -238,11 +238,14 @@
   user-select: none;
   -webkit-user-select: none;
 }
-.am-svg.am-space-pan {
+.am-svg.am-pan-cursor {
   cursor: grab;
 }
-.am-svg.am-space-pan:active {
+.am-svg.am-pan-cursor:active {
   cursor: grabbing;
+}
+.am-svg.am-place-cursor {
+  cursor: crosshair;
 }
 .am-marquee {
   position: absolute;
@@ -356,9 +359,12 @@
 }
 .am-icon-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 1px;
-  padding: 2px;
+  /* Fixed-width columns (not fr/minmax) so a column's width — and the icon
+     inside it — never stretches as the panel resizes; only the number of
+     columns that fit changes, reflowing rows automatically. */
+  grid-template-columns: repeat(auto-fill, 22px);
+  gap: 2px;
+  padding: 3px;
   background: #eceff3;
   border-top: 1px solid #eceff3;
 }
@@ -369,8 +375,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 3px;
-  height: 28px;
+  height: 22px;
 }
 .am-icon-btn:hover {
   background: #eef2ff;
@@ -383,13 +388,11 @@
   cursor: pointer;
 }
 .am-icon-img {
-  max-width: 100%;
-  max-height: 100%;
+  max-width: 14px;
+  max-height: 14px;
   width: auto;
   height: auto;
   display: block;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
   -webkit-user-drag: none;
 }
 
@@ -447,6 +450,11 @@
   stroke: var(--am-accent);
   stroke-width: 2.5;
 }
+.am-element.am-hinge-target .am-shape {
+  stroke: #2ecc71;
+  stroke-width: 3;
+  stroke-dasharray: 6 3;
+}
 .am-label {
   width: 100%;
   height: 100%;
@@ -472,7 +480,6 @@
 }
 .am-badge {
   pointer-events: none;
-  opacity: 0.85;
 }
 .am-resize-handle {
   fill: #fff;
@@ -547,6 +554,27 @@
 .am-edge-handle:active {
   cursor: grabbing;
 }
+.am-segment-handle {
+  fill: var(--am-accent);
+  stroke: #fff;
+  stroke-width: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+.am-edge.am-selected .am-segment-handle {
+  opacity: 0.55;
+  pointer-events: all;
+}
+.am-segment-handle:hover {
+  opacity: 1;
+}
+.am-segment-h {
+  cursor: ns-resize;
+}
+.am-segment-v {
+  cursor: ew-resize;
+}
 .am-edge-label-bg {
   fill: var(--am-canvas-bg);
   opacity: 0.92;
@@ -568,30 +596,47 @@
   font-size: 12.5px;
 }
 .am-inspector-empty {
-  color: var(--am-text-dim);
+  color: var(--vscode-descriptionForeground, var(--am-text-dim));
   line-height: 1.5;
 }
 .am-inspector-title {
   font-weight: 600;
   margin-bottom: 10px;
   font-size: 13px;
+  color: var(--vscode-foreground, var(--am-text));
 }
 .am-field-label {
   display: block;
   margin: 10px 0 4px;
-  color: var(--am-text-dim);
+  color: var(--vscode-descriptionForeground, var(--am-text-dim));
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
+/* Field styling favors VS Code's own input theme tokens (falling back to
+   our light-mode defaults for the no-VS-Code dev-preview harness) — a
+   plain border on a plain background reads as static text, not something
+   editable; a distinct fill plus a clear focus ring make that obvious. */
 .am-field-input,
 .am-field-textarea {
   width: 100%;
+  box-sizing: border-box;
   padding: 6px 8px;
-  border: 1px solid var(--am-border);
-  border-radius: 5px;
+  border: 1px solid var(--vscode-input-border, var(--am-border));
+  border-radius: 4px;
   font-size: 12.5px;
   font-family: inherit;
+  background: var(--vscode-input-background, #f4f4f4);
+  color: var(--vscode-input-foreground, var(--am-text));
+}
+.am-field-input::placeholder,
+.am-field-textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--am-text-dim));
+}
+.am-field-input:focus,
+.am-field-textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder, var(--am-accent));
+  outline-offset: -1px;
 }
 .am-field-textarea {
   min-height: 60px;
