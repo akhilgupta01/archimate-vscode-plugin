@@ -1,0 +1,71 @@
+<!doctype html>
+<html><head><style>
+body { display:flex; flex-wrap:wrap; gap:24px; background:#1e1e1e; padding:24px; }
+.box { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.swatch { display:flex; align-items:center; justify-content:center; width:80px; height:80px; border-radius:6px; }
+.swatch svg { width:44px; height:44px; }
+.dark { background:#2d2d2d; }
+.dark svg rect, .dark svg ellipse { fill:#c5c5c5; }
+.darkactive { background:#2d2d2d; }
+.darkactive svg rect, .darkactive svg ellipse { fill:#ffffff; }
+.light { background:#e8e8e8; }
+.light svg rect, .light svg ellipse { fill:#424242; }
+label { color:#ccc; font:11px sans-serif; }
+</style></head>
+<body>
+
+<div class="box">
+<div class="swatch dark" id="v1-dark"></div>
+<div class="swatch light" id="v1-light"></div>
+<label>v1: overlap corner</label>
+</div>
+
+<div class="box">
+<div class="swatch dark" id="v2-dark"></div>
+<div class="swatch light" id="v2-light"></div>
+<label>v2: shrink 4th square + badge outside</label>
+</div>
+
+<div class="box">
+<div class="swatch dark" id="v3-dark"></div>
+<div class="swatch light" id="v3-light"></div>
+<label>v3: replace 4th square entirely</label>
+</div>
+
+<script>
+const v1 = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <rect x="2.5" y="2.5" width="8" height="8" rx="1.5"/>
+  <rect x="13.5" y="2.5" width="8" height="8" rx="1.5"/>
+  <rect x="2.5" y="13.5" width="8" height="8" rx="1.5"/>
+  <rect x="13.5" y="13.5" width="8" height="8" rx="1.5"/>
+  <rect x="16" y="15.5" width="6.5" height="4.5"/>
+  <ellipse cx="19.25" cy="15.5" rx="3.25" ry="1.5"/>
+  <ellipse cx="19.25" cy="20" rx="3.25" ry="1.5"/>
+</svg>`;
+
+const v2 = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <rect x="2.5" y="2.5" width="8" height="8" rx="1.5"/>
+  <rect x="13.5" y="2.5" width="8" height="8" rx="1.5"/>
+  <rect x="2.5" y="13.5" width="8" height="8" rx="1.5"/>
+  <rect x="13" y="14" width="6" height="6" rx="1.2"/>
+  <rect x="17.5" y="17" width="5.2" height="3.4" fill="#00000000"/>
+  <rect x="17.6" y="17.3" width="4.9" height="3.4"/>
+  <ellipse cx="20.05" cy="17.3" rx="2.45" ry="1.15"/>
+  <ellipse cx="20.05" cy="20.7" rx="2.45" ry="1.15"/>
+</svg>`;
+
+const v3 = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <rect x="2.5" y="2.5" width="8" height="8" rx="1.5"/>
+  <rect x="13.5" y="2.5" width="8" height="8" rx="1.5"/>
+  <rect x="2.5" y="13.5" width="8" height="8" rx="1.5"/>
+  <rect x="15.5" y="15" width="6" height="4.2"/>
+  <ellipse cx="18.5" cy="15" rx="3" ry="1.4"/>
+  <ellipse cx="18.5" cy="19.2" rx="3" ry="1.4"/>
+</svg>`;
+
+for (const [id, svg] of [['v1',v1],['v2',v2],['v3',v3]]) {
+  document.getElementById(id+'-dark').innerHTML = svg;
+  document.getElementById(id+'-light').innerHTML = svg;
+}
+</script>
+</body></html>

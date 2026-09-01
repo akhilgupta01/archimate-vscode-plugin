@@ -92,7 +92,7 @@
   flex: 0 0 10px;
   text-align: center;
   font-size: 9px;
-  color: var(--am-text-dim);
+  color: var(--vscode-descriptionForeground, var(--am-text-dim));
   cursor: pointer;
 }
 .am-tree-icon {
@@ -118,6 +118,43 @@
 }
 .am-view-item {
   padding-left: 6px;
+}
+/* Model Tree rows reuse .am-tree-row's structure (flex/padding/radius) but
+   not its hardcoded light-mode hover colour — this list is a real VS Code
+   sidebar (unlike the Views tree, which only ever lives inside the main
+   canvas panel), so it needs actual theme tokens the same way the Palette
+   already does. */
+.am-model-tree-row,
+.am-model-tree-folder {
+  color: var(--vscode-foreground, var(--am-text));
+}
+.am-model-tree-row:hover,
+.am-model-tree-folder:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, #f2f4f8));
+}
+.am-model-tree-row {
+  cursor: grab;
+}
+.am-model-tree-folder {
+  cursor: pointer;
+  font-weight: 500;
+}
+/* The delete (×) button already themes fine (its red hover reads clearly
+   either way), but the "+"/× glyphs themselves and the new "add subfolder"
+   button need the same theme-token treatment as the rows around them. */
+.am-model-tree-row .am-view-delete,
+.am-model-tree-folder .am-view-delete {
+  color: var(--vscode-descriptionForeground, var(--am-text-dim));
+}
+.am-model-tree-add:hover {
+  background: var(--vscode-list-hoverBackground, #dbeaff);
+  color: var(--vscode-focusBorder, #2a6fd6);
+}
+.am-tree-empty {
+  padding: 4px 8px 4px 24px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground, var(--am-text-dim));
 }
 .am-view-meta {
   font-size: 10.5px;
@@ -308,9 +345,16 @@
 .am-palette {
   display: flex;
   flex-direction: column;
-  flex: 1 1 60%;
+  flex: 1 1 40%;
   min-height: 0;
   border-bottom: 1px solid var(--am-border);
+}
+/* Dev-preview-only third panel (the real VS Code build gets its own
+   independently-resizable sidebar view instead — see modelTreeMain.ts) —
+   reuses .am-palette's layout, just with a smaller share of a cramped
+   250px-ish stacked column. */
+.am-model-tree-panel {
+  flex: 1 1 30%;
 }
 .am-collapse-btn {
   margin-left: auto;
@@ -691,7 +735,7 @@ body.vscode-high-contrast .am-icon-mono .am-icon-img {
 
 /* ---------- Inspector (bottom of right dock) ---------- */
 .am-inspector {
-  flex: 1 1 40%;
+  flex: 1 1 30%;
   min-height: 0;
   overflow: hidden;
   padding: 0;

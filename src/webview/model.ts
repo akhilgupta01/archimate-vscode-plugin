@@ -222,6 +222,30 @@ export class ArchimateElement {
   bounds(): Bounds { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
 }
 
+// ---------- shared model elements (the "Model Tree") ----------
+// Every element ever placed on any view is also saved as a standalone
+// record — id/type/name/documentation only, no position/size/appearance —
+// so it can be browsed and dragged into *other* views too (see the
+// Model Tree sidebar, src/webview/modelTreeView.ts). Position, size,
+// appearance, and relationships stay purely per-view: dragging the same
+// record into a second view creates a new per-view ArchimateElement that
+// shares this id and these four fields, but has its own independent
+// geometry/appearance from the moment it's placed.
+export interface ModelElementRecord {
+  id: string;
+  type: ElementType;
+  name: string;
+  documentation: string;
+}
+export function captureModelElementRecord(el: ArchimateElement): ModelElementRecord {
+  return { id: el.id, type: el.type, name: el.name, documentation: el.documentation };
+}
+/** Which Model Tree folder an element type files under — Physical types fold into the Technology folder, matching how the palette already groups them into one section. */
+export function modelElementFolder(type: ElementType): LayerKey {
+  const layer = ELEMENT_TYPES[type].layer as LayerKey;
+  return layer === 'physical' ? 'technology' : layer;
+}
+
 /** Just the Appearance-tab fields of an element — e.g. what the canvas's Format Painter tool copies from one element and stamps onto another. */
 export interface AppearanceSnapshot {
   fillColor: string | null;

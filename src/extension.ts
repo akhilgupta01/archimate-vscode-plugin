@@ -10,11 +10,78 @@ import {
   createFolder,
   deleteFolderKeepingChildren,
   renamePath,
+  listModelTree,
+  writeModelElement,
 } from "./fsBackend.js";
 import type { RpcRequest, RpcResponse, RpcMethod } from "./protocol.js";
 import type { Settings } from "./webview/storage/StorageAdapter.js";
+import { LAYERS, modelElementFolder } from "./webview/model.js";
+import type { ModelElementRecord } from "./webview/model.js";
+
+// Handles every storage RPC method that doesn't need anything
+// panel-specific (an open external file, in DesignerPanel's case) — shared
+// by DesignerPanel (the full StorageAdapter surface) and
+// ModelTreeViewProvider (only ever calls the Model-Tree-relevant subset,
+// but there's no harm exposing the rest) so both webviews' StorageAdapter
+// instances talk to the exact same on-disk logic.
+async function dispatchStorageRpc(
+  method: RpcMethod,
+  params: Record<string, unknown>,
+  workDir: string,
+): Promise<unknown> {
+  switch (method) {
+    case "listTree":
+      return { root: workDir, entries: await walkTree(workDir) };
+    case "readView":
+      return readView(workDir, params.path as string);
+    case "writeView":
+      return writeView(workDir, params.path as string, params.data as any);
+    case "deleteView":
+      await deleteView(workDir, params.path as string);
+      return { ok: true };
+    case "createFolder":
+      await createFolder(workDir, params.path as string);
+      return { ok: true };
+    case "deleteFolder":
+      await deleteFolderKeepingChildren(workDir, params.path as string);
+      return { ok: true };
+    case "rename":
+      await renamePath(workDir, params.from as string, params.to as string);
+      return { ok: true };
+    case "listModelTree":
+      return { nodes: await listModelTree(workDir) };
+    case "writeModelElement": {
+      const record = params.record as ModelElementRecord;
+      const folder = LAYERS[modelElementFolder(record.type)].label;
+      await writeModelElement(workDir, folder, record);
+      return { ok: true };
+    }
+    default:
+      throw new Error(`Unsupported here: ${method}`);
+  }
+}
 
 const DEFAULT_WORK_DIR = path.join(os.homedir(), ".archi", "work");
+
+// Views and Model Tree element records both live under this one directory.
+// Priority: an explicit archimate.workDir setting always wins (the user
+// said exactly where they want it); otherwise, if a folder is open in this
+// VS Code window, use that — so views/elements land right in the user's
+// own project and show up in the Explorer, matching how Archi's own Model
+// Tree lives alongside the rest of the project rather than off in some
+// hidden home-directory cache. Only falls back to ~/.archi/work when
+// neither applies (e.g. no folder open at all).
+function resolveWorkDir(): string {
+  const configured = vscode.workspace
+    .getConfiguration("archimate")
+    .get<string>("workDir");
+  if (configured && configured.trim()) {
+    return path.resolve(configured.replace(/^~/, os.homedir()));
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder) return folder.uri.fsPath;
+  return DEFAULT_WORK_DIR;
+}
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
@@ -25,6 +92,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider(
       "archimate.inspectorView",
       new InspectorViewProvider(context),
+    ),
+    vscode.window.registerWebviewViewProvider(
+      "archimate.modelTreeView",
+      new ModelTreeViewProvider(context),
     ),
     vscode.commands.registerCommand("archimate.openDesigner", () => {
       DesignerPanel.createOrShow(context);
@@ -140,6 +211,20 @@ class DesignerPanel {
     DesignerPanel.current?.panel.webview.postMessage(msg);
   }
 
+  /** Relays "place this existing Model Tree element" from the Model Tree sidebar view to the designer canvas — arms it the same way a Palette element type does, but carrying a specific element's id/name/documentation to reuse rather than a fresh one to create. */
+  static postModelElementArm(record: ModelElementRecord): void {
+    if (!DesignerPanel.current) {
+      vscode.window.showInformationMessage(
+        'Open the ArchiMate Designer first (run "ArchiMate: Open Designer"), then drag a component from the Model Tree.',
+      );
+      return;
+    }
+    DesignerPanel.current.panel.webview.postMessage({
+      type: "archiModelElementArm",
+      record,
+    });
+  }
+
   static getLastArmed(): { kind: string | null; archiType: string | null } {
     return DesignerPanel.lastArmed;
   }
@@ -178,12 +263,7 @@ class DesignerPanel {
   }
 
   private getWorkDir(): string {
-    const configured = vscode.workspace
-      .getConfiguration("archimate")
-      .get<string>("workDir");
-    return configured && configured.trim()
-      ? path.resolve(configured.replace(/^~/, os.homedir()))
-      : DEFAULT_WORK_DIR;
+    return resolveWorkDir();
   }
 
   private async handleMessage(msg: any): Promise<void> {
@@ -247,12 +327,6 @@ class DesignerPanel {
         }
         return { workDir: this.getWorkDir() } satisfies Settings;
       }
-      case "listTree":
-        return { root: workDir, entries: await walkTree(workDir) };
-      case "readView":
-        return readView(workDir, params.path as string);
-      case "writeView":
-        return writeView(workDir, params.path as string, params.data as any);
       case "writeExternalView": {
         if (!this.initialFileUri) throw new Error("No external file is open");
         const data = params.data as any;
@@ -267,20 +341,16 @@ class DesignerPanel {
         );
         return { ok: true };
       }
-      case "deleteView":
-        await deleteView(workDir, params.path as string);
-        return { ok: true };
-      case "createFolder":
-        await createFolder(workDir, params.path as string);
-        return { ok: true };
-      case "deleteFolder":
-        await deleteFolderKeepingChildren(workDir, params.path as string);
-        return { ok: true };
-      case "rename":
-        await renamePath(workDir, params.from as string, params.to as string);
-        return { ok: true };
-      default:
-        throw new Error(`Unknown method: ${method satisfies never}`);
+      default: {
+        const result = await dispatchStorageRpc(method, params, workDir);
+        // A change here could be organizing a component into a subfolder
+        // as easily as creating/renaming one, so refresh the Model Tree
+        // sidebar (if it's open) after any of these, not just writes.
+        if (method === "writeModelElement" || method === "createFolder" || method === "rename" || method === "deleteFolder") {
+          void ModelTreeViewProvider.current?.postTree();
+        }
+        return result;
+      }
     }
   }
 
@@ -483,6 +553,108 @@ class InspectorViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
 <div id="app"></div>
+<script nonce="${nonce}" type="module" src="${scriptUri}"></script>
+</body>
+</html>`;
+  }
+}
+
+// The Model Tree lives in its own Activity Bar container — a separate icon
+// in the primary sidebar, not stacked under the Palette — since it browses
+// a different thing (every saved element, across every view) than the
+// Palette's per-view tool list. Every element ever placed on any view is
+// also saved as a standalone record (writeModelElement,
+// above) independent of any single view, and this lists them so one can be
+// dragged into other views to reuse it. Unlike Palette/Inspector, this view
+// doesn't mirror live canvas state (there's no "currently armed tool" of
+// its own to echo back) — it just reads the saved records straight from
+// disk and re-reads them whenever a write happens anywhere.
+class ModelTreeViewProvider implements vscode.WebviewViewProvider {
+  static current: ModelTreeViewProvider | undefined;
+  private view: vscode.WebviewView | undefined;
+
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this.view = webviewView;
+    ModelTreeViewProvider.current = this;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.context.extensionUri, "dist"),
+      ],
+    };
+    webviewView.webview.html = this.getHtml(webviewView.webview);
+    webviewView.webview.onDidReceiveMessage((msg) => this.handleMessage(msg));
+    void this.postTree();
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) void this.postTree();
+    });
+    webviewView.onDidDispose(() => {
+      if (ModelTreeViewProvider.current === this) {
+        ModelTreeViewProvider.current = undefined;
+      }
+      this.view = undefined;
+    });
+  }
+
+  // Two message shapes come through here: the special "place this on the
+  // canvas" arm request (relayed to DesignerPanel, same as the Palette's
+  // archiToolArm), and generic StorageAdapter RPC requests — this view has
+  // its own VSCodeAdapter (see modelTreeMain.ts) so it can create/rename/
+  // move/delete folders and elements independent of whether a Designer
+  // canvas is even open, not just browse them.
+  private async handleMessage(msg: any): Promise<void> {
+    if (msg && msg.type === "archiModelElementArm") {
+      DesignerPanel.postModelElementArm(msg.record as ModelElementRecord);
+      return;
+    }
+    const { id, method, params } = msg as RpcRequest;
+    if (!method) return;
+    try {
+      const workDir = resolveWorkDir();
+      await ensureDir(workDir);
+      const result = await dispatchStorageRpc(method, params || {}, workDir);
+      if (method === "writeModelElement" || method === "createFolder" || method === "rename" || method === "deleteFolder") {
+        void this.postTree();
+      }
+      this.view?.webview.postMessage({ id, ok: true, result } satisfies RpcResponse);
+    } catch (err) {
+      this.view?.webview.postMessage({ id, ok: false, error: (err as Error).message } satisfies RpcResponse);
+    }
+  }
+
+  /** Re-reads the Model Tree from disk and pushes it to this view (if it's currently resolved — a harmless no-op otherwise). */
+  async postTree(): Promise<void> {
+    if (!this.view) return;
+    const workDir = resolveWorkDir();
+    await ensureDir(workDir);
+    const nodes = await listModelTree(workDir);
+    this.view.webview.postMessage({ type: "archiModelElementsChanged", nodes });
+  }
+
+  private getHtml(webview: vscode.Webview): string {
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "modelTree.js"),
+    );
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview.css"),
+    );
+    const assetsUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "assets"),
+    );
+    const nonce = getNonce();
+    return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<link rel="stylesheet" href="${styleUri}">
+<style>html,body{margin:0;height:100%;background:var(--vscode-sideBar-background,#fff);color:var(--vscode-foreground,#222);} #app{height:100vh;}</style>
+</head>
+<body>
+<div id="app"></div>
+<script nonce="${nonce}">window.__ARCHI_ASSET_BASE__ = ${JSON.stringify(assetsUri.toString())};</script>
 <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
 </body>
 </html>`;

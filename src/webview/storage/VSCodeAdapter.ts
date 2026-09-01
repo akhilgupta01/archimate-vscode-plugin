@@ -3,8 +3,9 @@
 // no filesystem access. The host (src/extension.ts) does the actual
 // fs.readFile/writeFile/rename work and replies with the same request id.
 
-import type { StorageAdapter, ViewData, TreeEntry, Settings } from './StorageAdapter.js';
+import type { StorageAdapter, ViewData, TreeEntry, Settings, ModelTreeNode } from './StorageAdapter.js';
 import type { RpcRequest, RpcResponse, RpcMethod } from '../../protocol.js';
+import type { ModelElementRecord } from '../model.js';
 
 export interface VsCodeApi { postMessage(message: unknown): void; }
 
@@ -48,4 +49,7 @@ export class VSCodeAdapter implements StorageAdapter {
   deleteFolder(path: string): Promise<void> { return this.call('deleteFolder', { path }); }
   deleteView(path: string): Promise<void> { return this.call('deleteView', { path }); }
   rename(fromPath: string, toPath: string): Promise<void> { return this.call('rename', { from: fromPath, to: toPath }); }
+
+  listModelTree(): Promise<ModelTreeNode[]> { return this.call<{ nodes: ModelTreeNode[] }>('listModelTree').then(r => r.nodes); }
+  writeModelElement(record: ModelElementRecord): Promise<void> { return this.call('writeModelElement', { record }); }
 }

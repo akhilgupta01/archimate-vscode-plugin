@@ -39,7 +39,9 @@ function fmtTime(ts: number): string {
   return sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString();
 }
 
-function folderGlyph(open: boolean): SVGElement {
+// Exported so modelTreeView.ts can render its own layer folders with the
+// exact same yellow folder icon, rather than duplicating the SVG.
+export function folderGlyph(open: boolean): SVGElement {
   const svg = svgEl('svg', { viewBox: '0 0 14 14', class: 'am-tree-icon' });
   const common = { fill: '#dcb35c', stroke: '#a3792f', 'stroke-width': 1, 'stroke-linejoin': 'round' };
   if (open) {

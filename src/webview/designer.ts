@@ -1,4 +1,4 @@
-import { ArchimateModel, ArchimateElement, ArchimateRelationship, ELEMENT_TYPES, LAYERS, ElementType, RelationshipType, ModelJSON, AppearanceSnapshot, captureAppearance, applyAppearance } from './model.js';
+import { ArchimateModel, ArchimateElement, ArchimateRelationship, ELEMENT_TYPES, LAYERS, ElementType, RelationshipType, ModelJSON, AppearanceSnapshot, captureAppearance, applyAppearance, ModelElementRecord, captureModelElementRecord } from './model.js';
 import { Renderer } from './renderer.js';
 import { GRID_SIZE } from './snap.js';
 import { LocalStorageAdapter } from './storage/LocalStorageAdapter.js';
@@ -7,6 +7,7 @@ import { humanize } from './paletteData.js';
 import { canNest } from './relationshipRules.js';
 import { ViewsPanel } from './viewsPanel.js';
 import { buildPaletteDom } from './paletteView.js';
+import { ModelTreeController } from './modelTreeView.js';
 import { renderInspectorDom, INSPECTOR_EMPTY_HTML, Selection, isAppearanceField, AppearanceField } from './inspectorView.js';
 import { CanvasInteractions } from './canvasInteractions.js';
 import { el } from './domUtil.js';
@@ -49,6 +50,8 @@ export class ArchimateDesigner {
   pendingSource: string | null = null;
   /** Set by the Format Painter toolbar button: the appearance captured from whichever element was selected when it was clicked, waiting for a target element click to apply to. */
   formatPainterAppearance: AppearanceSnapshot | null = null;
+  /** Set by clicking/dragging a Model Tree sidebar row: the existing element record waiting for a canvas click (or drop, embedded mode) to place it into this view. */
+  armedModelElement: ModelElementRecord | null = null;
   currentViewPath: string | null = null;
   paletteCollapsed = false;
   externalFileUri: string | null = null;
@@ -67,6 +70,8 @@ export class ArchimateDesigner {
   private zoomLabel!: HTMLSpanElement;
   private paletteScroll?: HTMLDivElement;
   private formatPainterBtn?: HTMLButtonElement;
+  private modelTreePanel?: HTMLDivElement;
+  private modelTreeController?: ModelTreeController;
 
   private hostApi: HostApi | null = null;
   private embeddedPalette = true;
@@ -103,6 +108,7 @@ export class ArchimateDesigner {
         else if (d.type === 'archiInspectorEdit') this._applyInspectorEdit(d.id, d.field, d.value, d.final);
         else if (d.type === 'archiInspectorReroute') this._applyInspectorReroute(d.id);
         else if (d.type === 'archiInspectorReset') this._resetAppearance(d.id);
+        else if (d.type === 'archiModelElementArm') this._armModelElement(d.record);
       });
     }
     this.renderer.fullRender();
@@ -190,6 +196,9 @@ export class ArchimateDesigner {
     this.palette = el('div', 'am-palette');
     this._buildPalette();
     dockContent.appendChild(this.palette);
+    this.modelTreePanel = el('div', 'am-palette am-model-tree-panel');
+    this._buildModelTreePanel();
+    dockContent.appendChild(this.modelTreePanel);
     this.inspector = el('div', 'am-inspector');
     this._buildInspector();
     dockContent.appendChild(this.inspector);
@@ -222,6 +231,38 @@ export class ArchimateDesigner {
 
     for (const [type, btn] of relButtons) btn.addEventListener('click', () => this._setRelationshipTool(type, btn));
     for (const [type, btn] of elementButtons) btn.addEventListener('pointerdown', (e) => this._startPaletteDrag(e, type));
+  }
+
+  // Embedded-mode-only counterpart to the real VS Code Model Tree sidebar
+  // (modelTreeMain.ts) — same controller class, but since this lives on the
+  // same page as the canvas it can also drop a drag directly onto it
+  // (onDropOnCanvas/isOverCanvas below), not just arm-then-click.
+  private _buildModelTreePanel(): void {
+    const panel = this.modelTreePanel!;
+    panel.innerHTML = '';
+    const header = el('div', 'am-panel-header');
+    header.textContent = 'Model Tree';
+    panel.appendChild(header);
+
+    const controller = new ModelTreeController({
+      storage: this.storage,
+      onPlace: (record) => this._armModelElement(record),
+      onDropOnCanvas: (record, clientX, clientY) => {
+        const pt = this._clientToWorld(clientX, clientY);
+        this._placeModelElement(record, pt.x - 70, pt.y - 27);
+      },
+      isOverCanvas: (clientX, clientY) => this._pointInCanvas(clientX, clientY),
+    });
+    panel.appendChild(controller.searchInput);
+    panel.appendChild(controller.scroll);
+    this.modelTreeController = controller;
+    this._refreshEmbeddedModelTree();
+  }
+
+  /** Re-reads the Model Tree from storage and redraws the embedded panel — call after any write (see _syncModelElement). No-op in hostApi mode (the real sidebar reads independently via the extension host). */
+  private _refreshEmbeddedModelTree(): void {
+    if (!this.modelTreeController) return;
+    this.storage.listModelTree().then(nodes => this.modelTreeController?.render(nodes)).catch(() => { /* best-effort */ });
   }
 
   private _buildToolbar(toolbar: HTMLDivElement): void {
@@ -290,6 +331,31 @@ export class ArchimateDesigner {
     window.addEventListener('pointerup', up);
   }
 
+  // ================= Model Tree placement =================
+  // The Model Tree panel/sidebar owns its own drag interactions (see
+  // ModelTreeController in modelTreeView.ts) — this just applies the result,
+  // reusing addElement's existing id-collision guard so dropping something
+  // already in this view selects it instead of duplicating it.
+  private _placeModelElement(record: ModelElementRecord, x: number, y: number): void {
+    this.addElement(record.type, x, y, { id: record.id, name: record.name, documentation: record.documentation });
+  }
+
+  // Mirrors _armTool for the case where the Model Tree lives in its own
+  // VS Code sidebar view and can't drag-and-drop onto this webview's
+  // canvas — arms placement by message instead; placing then happens on
+  // the next plain click on empty canvas (see _wireCanvasEvents).
+  private _armModelElement(record: ModelElementRecord): void {
+    this.activeRelType = null;
+    this.armedElementType = null;
+    this.pendingSource = null;
+    this.formatPainterAppearance = null;
+    this.paletteScroll?.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
+    this.formatPainterBtn?.classList.remove('am-active');
+    this.armedModelElement = this.armedModelElement?.id === record.id ? null : record;
+    this._updateArmedStatus();
+    this._notifyToolArmed();
+  }
+
   private _pointInCanvas(cx: number, cy: number): boolean {
     const r = this.canvasWrap.getBoundingClientRect();
     return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
@@ -332,12 +398,13 @@ export class ArchimateDesigner {
     this._notifyToolArmed();
   }
 
-  /** Clears whatever tool is currently armed (relationship, element, or Format Painter), embedded or host-driven. */
+  /** Clears whatever tool is currently armed (relationship, element, Format Painter, or a Model Tree placement), embedded or host-driven. */
   _cancelActiveTool(): void {
     this.activeRelType = null;
     this.pendingSource = null;
     this.armedElementType = null;
     this.formatPainterAppearance = null;
+    this.armedModelElement = null;
     this.paletteScroll?.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
     this.formatPainterBtn?.classList.remove('am-active');
     this.svg.classList.remove('am-paint-cursor');
@@ -346,13 +413,15 @@ export class ArchimateDesigner {
   }
 
   private _updateArmedStatus(): void {
-    this.svg.classList.toggle('am-place-cursor', !!this.armedElementType);
+    this.svg.classList.toggle('am-place-cursor', !!this.armedElementType || !!this.armedModelElement);
     if (this.activeRelType) {
       this.statusEl.textContent = `Click a source element, then a target element to draw a ${humanize(this.activeRelType)} relationship. Esc to cancel.`;
     } else if (this.armedElementType) {
       this.statusEl.textContent = `Click on the canvas to place a ${humanize(this.armedElementType)}. Esc to cancel.`;
     } else if (this.formatPainterAppearance) {
       this.statusEl.textContent = 'Format Painter armed — click another element to copy the appearance onto it. Esc to cancel.';
+    } else if (this.armedModelElement) {
+      this.statusEl.textContent = `Click on the canvas to place "${this.armedModelElement.name}". Esc to cancel.`;
     } else {
       this.statusEl.textContent = this.embeddedPalette
         ? 'Drag elements from the palette onto the canvas.'
@@ -474,6 +543,10 @@ export class ArchimateDesigner {
     else if (elModel && field === 'documentation') { elModel.documentation = value; }
     else if (elModel && isAppearanceField(field)) { this._applyAppearanceEdit(elModel, field, value); }
     else if (relModel && field === 'name') { relModel.name = value; this.renderer.renderEdge(relModel); }
+    // Name/documentation are the Model Tree's shared fields (see model.ts) —
+    // write the change through on commit so it's what every *other* view
+    // sees the next time it loads this same element.
+    if (elModel && final && (field === 'name' || field === 'documentation')) this._syncModelElement(elModel);
     if (final) this._afterModelChange();
   }
 
@@ -528,6 +601,13 @@ export class ArchimateDesigner {
           const pt = this._clientToWorld(e.clientX, e.clientY);
           this._cancelActiveTool();
           this.addElement(type, pt.x - 70, pt.y - 27);
+          return;
+        }
+        if (this.armedModelElement) {
+          const record = this.armedModelElement;
+          const pt = this._clientToWorld(e.clientX, e.clientY);
+          this._cancelActiveTool();
+          this._placeModelElement(record, pt.x - 70, pt.y - 27);
           return;
         }
         if (this.activeRelType || this.formatPainterAppearance) {
@@ -679,8 +759,19 @@ export class ArchimateDesigner {
   }
 
   // ================= public API =================
-  addElement(type: ElementType, x: number, y: number, opts: { name?: string; id?: string } = {}): ArchimateElement {
-    const elObj = this.model.addElement({ type, x, y, name: opts.name || humanize(type), id: opts.id });
+  addElement(type: ElementType, x: number, y: number, opts: { name?: string; id?: string; documentation?: string } = {}): ArchimateElement {
+    // A specific id is only ever passed when placing an existing Model Tree
+    // record (see _placeModelElement) — if it's already in this view,
+    // creating a second local element with the same id would silently
+    // clobber whichever one the Map ends up keeping, so just point at the
+    // one already here instead.
+    if (opts.id && this.model.elements.has(opts.id)) {
+      const existing = this.model.getElement(opts.id)!;
+      this._setSelection(new Set([opts.id]));
+      this._flashStatus(`"${existing.name}" is already in this view.`);
+      return existing;
+    }
+    const elObj = this.model.addElement({ type, x, y, name: opts.name || humanize(type), id: opts.id, documentation: opts.documentation || '' });
     this.renderer.renderElement(elObj);
     if (canNest(type)) {
       const target = this.interactions.hitTestContainerFor(elObj.id, elObj.x + elObj.w / 2, elObj.y + elObj.h / 2, new Set());
@@ -689,8 +780,16 @@ export class ArchimateDesigner {
         this.interactions.offerNestingRelationships([{ parent: target, child: elObj }]);
       }
     }
+    this._syncModelElement(elObj);
     this._afterModelChange();
     return elObj;
+  }
+
+  /** Write-through to this element's shared Model Tree record (id/type/name/documentation only — see ModelElementRecord) so it's browsable/reusable from the Model Tree sidebar. Best-effort: a failure here shouldn't block the view's own save. */
+  private _syncModelElement(elObj: ArchimateElement): void {
+    this.storage.writeModelElement(captureModelElementRecord(elObj))
+      .then(() => this._refreshEmbeddedModelTree())
+      .catch(() => { /* best-effort */ });
   }
 
   addRelationship(type: RelationshipType, sourceId: string, targetId: string, opts: { name?: string } = {}): ArchimateRelationship {
@@ -785,6 +884,31 @@ export class ArchimateDesigner {
     this.renderer.fullRender();
     if (hasModel(json) && json.view) { this.zoom = json.view.zoom || 1; this.pan = json.view.pan || { x: 40, y: 40 }; this._applyTransform(); }
     this._setSelection(new Set());
+    this._refreshFromModelTree();
+  }
+
+  // Re-syncs name/documentation for every element in this view against its
+  // shared Model Tree record (see model.ts's ModelElementRecord) — those two
+  // fields are meant to behave like a live reference, so if this element
+  // was renamed from a *different* view since this view was last saved,
+  // this is what catches this view up on open.
+  private _refreshFromModelTree(): void {
+    this.storage.listModelTree().then(nodes => {
+      const records = nodes.filter((n): n is typeof n & { type: 'element' } => n.type === 'element').map(n => n.record);
+      if (!records.length) return;
+      const byId = new Map(records.map(r => [r.id, r]));
+      let changed = false;
+      for (const elObj of this.model.elements.values()) {
+        const record = byId.get(elObj.id);
+        if (!record) continue;
+        if (elObj.name !== record.name) { elObj.name = record.name; this.renderer.updateElementLabel(elObj); changed = true; }
+        if (elObj.documentation !== record.documentation) { elObj.documentation = record.documentation; changed = true; }
+      }
+      if (changed) {
+        this._afterModelChange();
+        if (this.inspector) this._renderInspector();
+      }
+    }).catch(() => { /* best-effort */ });
   }
 
   exportJSON(): void {

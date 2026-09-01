@@ -5,7 +5,8 @@
 
 export type RpcMethod =
   | 'getSettings' | 'updateSettings' | 'listTree' | 'readView'
-  | 'writeView' | 'writeExternalView' | 'createFolder' | 'deleteFolder' | 'deleteView' | 'rename';
+  | 'writeView' | 'writeExternalView' | 'createFolder' | 'deleteFolder' | 'deleteView' | 'rename'
+  | 'listModelTree' | 'writeModelElement';
 
 export interface RpcRequest {
   id: number;

@@ -55,20 +55,32 @@ const inspectorViewConfig = {
   logLevel: 'info',
 };
 
+const modelTreeViewConfig = {
+  entryPoints: ['src/webview/modelTreeMain.ts'],
+  bundle: true,
+  outfile: 'dist/modelTree.js',
+  platform: 'browser',
+  format: 'esm',
+  target: 'es2022',
+  sourcemap: true,
+  logLevel: 'info',
+};
+
 function copyAssets() {
   cpSync('src/webview/style.css', 'dist/webview.css');
   cpSync('src/webview/assets', 'dist/assets', { recursive: true });
 }
 
 if (watch) {
-  const [extCtx, webCtx, paletteCtx, inspectorCtx] = await Promise.all([
+  const [extCtx, webCtx, paletteCtx, inspectorCtx, modelTreeCtx] = await Promise.all([
     esbuild.context(extensionConfig),
     esbuild.context(webviewConfig),
     esbuild.context(paletteViewConfig),
     esbuild.context(inspectorViewConfig),
+    esbuild.context(modelTreeViewConfig),
   ]);
   copyAssets();
-  await Promise.all([extCtx.watch(), webCtx.watch(), paletteCtx.watch(), inspectorCtx.watch()]);
+  await Promise.all([extCtx.watch(), webCtx.watch(), paletteCtx.watch(), inspectorCtx.watch(), modelTreeCtx.watch()]);
   console.log('esbuild watching for changes...');
 } else {
   await Promise.all([
@@ -76,6 +88,7 @@ if (watch) {
     esbuild.build(webviewConfig),
     esbuild.build(paletteViewConfig),
     esbuild.build(inspectorViewConfig),
+    esbuild.build(modelTreeViewConfig),
   ]);
   copyAssets();
   console.log('Build complete.');
