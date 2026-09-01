@@ -958,6 +958,45 @@ input[type="number"].am-field-input {
   flex: 0 0 52px;
   min-width: 0;
 }
+/* Text Alignment / Text Position: a 3-way segmented icon toggle instead of
+   a <select> — the choices read as pictures far faster than as words, and
+   at sidebar width a dropdown's text ("Left"/"Center"/"Right") was often
+   truncated anyway. */
+.am-icon-toggle-group {
+  display: inline-flex;
+  border: 1px solid var(--vscode-input-border, var(--am-border));
+  border-radius: 3px;
+  overflow: hidden;
+  width: fit-content;
+}
+.am-icon-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--vscode-input-border, var(--am-border));
+  background: var(--vscode-input-background, #f4f4f4);
+  color: var(--vscode-foreground, var(--am-text));
+  cursor: pointer;
+}
+.am-icon-toggle-btn:last-child {
+  border-right: none;
+}
+.am-icon-toggle-btn svg {
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+}
+.am-icon-toggle-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, #eef2ff));
+}
+.am-icon-toggle-btn.am-active {
+  background: var(--vscode-list-activeSelectionBackground, #dbe6ff);
+  color: var(--vscode-list-activeSelectionForeground, var(--am-accent));
+}
 .am-color-swatch {
   width: 100%;
   max-width: 320px;

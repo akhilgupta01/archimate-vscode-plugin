@@ -83,7 +83,53 @@ function resolveWorkDir(): string {
   return DEFAULT_WORK_DIR;
 }
 
+// Model Tree / Views panel data is read straight off disk (see
+// dispatchStorageRpc above) and only re-read when this extension itself
+// just wrote something (see the `method === ...` checks scattered through
+// the RPC handlers below). A rename/create/delete made *outside* the
+// extension — e.g. renaming a folder in VS Code's own Explorer — never
+// goes through that path, so those views would otherwise sit stale until
+// something else happened to trigger a re-read. Watching the work dir
+// closes that gap: any filesystem change underneath it, regardless of who
+// made it, refreshes both the Model Tree sidebar and the Designer's own
+// Views panel.
+let workDirWatcher: vscode.FileSystemWatcher | undefined;
+let refreshDebounce: ReturnType<typeof setTimeout> | undefined;
+
+function refreshTreesFromDisk(): void {
+  clearTimeout(refreshDebounce);
+  // A rename surfaces as a delete+create pair (and a folder rename fires
+  // once per descendant on some filesystems) — coalesce that burst into a
+  // single refresh instead of re-reading the whole tree per event.
+  refreshDebounce = setTimeout(() => {
+    void ModelTreeViewProvider.current?.postTree();
+    DesignerPanel.notifyExternalStorageChange();
+  }, 250);
+}
+
+function setupWorkDirWatcher(context: vscode.ExtensionContext): void {
+  workDirWatcher?.dispose();
+  const workDir = resolveWorkDir();
+  workDirWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(vscode.Uri.file(workDir), "**"),
+  );
+  workDirWatcher.onDidCreate(refreshTreesFromDisk);
+  workDirWatcher.onDidDelete(refreshTreesFromDisk);
+  context.subscriptions.push(workDirWatcher);
+}
+
 export function activate(context: vscode.ExtensionContext): void {
+  setupWorkDirWatcher(context);
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("archimate.workDir")) {
+        setupWorkDirWatcher(context);
+      }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      setupWorkDirWatcher(context);
+    }),
+  );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       "archimate.paletteView",
@@ -227,6 +273,13 @@ class DesignerPanel {
 
   static getLastArmed(): { kind: string | null; archiType: string | null } {
     return DesignerPanel.lastArmed;
+  }
+
+  /** Tells an open Designer webview that something changed on disk outside the extension (e.g. a rename in VS Code's own Explorer) — no-op if no Designer panel is open. */
+  static notifyExternalStorageChange(): void {
+    DesignerPanel.current?.panel.webview.postMessage({
+      type: "archiExternalStorageChange",
+    });
   }
 
   static getLastSelection(): unknown {

@@ -140,16 +140,29 @@ export class LocalStorageAdapter implements StorageAdapter {
 
   // Finds the existing entry for this element id anywhere under its layer
   // (it may have been organized into a subfolder) and updates it in place;
-  // otherwise creates it fresh at the layer root. Mirrors fsBackend.ts's
-  // writeModelElement so both adapters behave the same way.
+  // otherwise creates it fresh at the layer root. The path's last segment
+  // mirrors the element's current *name* (sanitized, de-duped against
+  // siblings) rather than its opaque id, matching fsBackend.ts's real-file
+  // behaviour — see writeModelElement there for why.
   async writeModelElement(record: ModelElementRecord): Promise<void> {
     const state = this.read();
     const existingPath = Object.keys(state.entries).find(p => {
       const e = state.entries[p];
       return e.type === 'element' && e.record.id === record.id;
-    });
+    }) ?? null;
     const layerName = LAYERS[modelElementFolder(record.type)].label;
-    const targetPath = existingPath ?? `${layerName}/${record.id}`;
+    const parentPath = existingPath && existingPath.includes('/')
+      ? existingPath.slice(0, existingPath.lastIndexOf('/'))
+      : layerName;
+    const baseName = record.name.trim().replace(/\//g, '-').trim() || 'Unnamed';
+    let fileName = baseName;
+    for (let n = 2; ; n++) {
+      const candidate = `${parentPath}/${fileName}`;
+      if (candidate === existingPath || !state.entries[candidate]) break;
+      fileName = `${baseName} (${n})`;
+    }
+    const targetPath = `${parentPath}/${fileName}`;
+    if (existingPath && existingPath !== targetPath) delete state.entries[existingPath];
     state.entries[targetPath] = { type: 'element', record };
     this.write(state);
   }

@@ -112,6 +112,7 @@ export class ArchimateDesigner {
         else if (d.type === 'archiInspectorReroute') this._applyInspectorReroute(d.id);
         else if (d.type === 'archiInspectorReset') this._resetAppearance(d.id);
         else if (d.type === 'archiModelElementArm') this._armModelElement(d.record);
+        else if (d.type === 'archiExternalStorageChange') this._refreshExternalStorage();
       });
     }
     this.renderer.fullRender();
@@ -267,6 +268,12 @@ export class ArchimateDesigner {
   private _refreshEmbeddedModelTree(): void {
     if (!this.modelTreeController) return;
     this.storage.listModelTree().then(nodes => this.modelTreeController?.render(nodes)).catch(() => { /* best-effort */ });
+  }
+
+  /** The extension host detected a filesystem change it didn't cause itself (e.g. a folder renamed in VS Code's own Explorer) — re-read both on-disk trees this webview shows, since neither refreshes on its own for changes made outside the app. hostApi-only: dev-preview's LocalStorageAdapter has no external writer to race against. */
+  private _refreshExternalStorage(): void {
+    void this.viewsPanelCtrl.renderList();
+    this._refreshEmbeddedModelTree();
   }
 
   private _buildToolbar(toolbar: HTMLDivElement): void {

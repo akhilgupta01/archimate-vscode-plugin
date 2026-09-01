@@ -2,7 +2,7 @@
   "name": "archimate-diagrams",
   "displayName": "ArchiMate Diagrams",
   "description": "Design ArchiMate diagrams — with automatic orthogonal connector routing, drag-to-reposition, resize, alignment guides, and multi-select — right inside VS Code.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "local-dev",
   "license": "MIT",
   "engines": {

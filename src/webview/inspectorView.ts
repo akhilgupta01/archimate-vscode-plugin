@@ -169,6 +169,49 @@ function selectControl(
   return select;
 }
 
+// Small 16x16 line-art glyphs for the alignment/position toggle groups below
+// — plain inline SVG (currentColor stroke/fill) rather than codicons, since
+// the codicon set has no text-alignment icons at all.
+const ALIGN_ICON_SVG: Record<"left" | "center" | "right", string> = {
+  left: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="3" y1="4" x2="13" y2="4"/><line x1="3" y1="8" x2="9" y2="8"/><line x1="3" y1="12" x2="11" y2="12"/></svg>`,
+  center: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="3" y1="4" x2="13" y2="4"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="4" y1="12" x2="12" y2="12"/></svg>`,
+  right: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="3" y1="4" x2="13" y2="4"/><line x1="7" y1="8" x2="13" y2="8"/><line x1="5" y1="12" x2="13" y2="12"/></svg>`,
+};
+const POSITION_ICON_SVG: Record<"top" | "middle" | "bottom", string> = {
+  top: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2.5" y="2.5" width="11" height="11" rx="1"/><rect x="4.5" y="4" width="7" height="2" fill="currentColor" stroke="none"/></svg>`,
+  middle: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2.5" y="2.5" width="11" height="11" rx="1"/><rect x="4.5" y="7" width="7" height="2" fill="currentColor" stroke="none"/></svg>`,
+  bottom: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2.5" y="2.5" width="11" height="11" rx="1"/><rect x="4.5" y="10" width="7" height="2" fill="currentColor" stroke="none"/></svg>`,
+};
+
+// Segmented icon-button toggle (three mutually-exclusive options), replacing
+// a <select> for fields where the choices read far faster as pictures than
+// as words — see the appearance form's Text Align / Text Position rows.
+function iconToggleControl(
+  options: readonly [string, string, string][], // [value, title, svg]
+  value: string | null,
+  defaultValue: string,
+  onChange: (v: string) => void,
+): HTMLDivElement {
+  const group = el("div", "am-icon-toggle-group");
+  const current = value || defaultValue;
+  const buttons: HTMLButtonElement[] = [];
+  for (const [val, title, svg] of options) {
+    const btn = el("button", "am-icon-toggle-btn", { type: "button", title }) as HTMLButtonElement;
+    btn.innerHTML = svg;
+    btn.setAttribute("aria-pressed", String(val === current));
+    if (val === current) btn.classList.add("am-active");
+    btn.addEventListener("click", () => {
+      for (const b of buttons) b.classList.remove("am-active");
+      btn.classList.add("am-active");
+      buttons.forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+      onChange(val);
+    });
+    buttons.push(btn);
+    group.appendChild(btn);
+  }
+  return group;
+}
+
 function renderAppearanceSection(
   root: HTMLElement,
   sel: Selection & { kind: "element" },
@@ -208,12 +251,20 @@ function renderAppearanceSection(
   fontSizeInput.value = String(sel.fontSize ?? 12);
   fontSizeInput.addEventListener("change", () => cb.onEdit(sel.id, "fontSize", fontSizeInput.value, true));
   fieldRow(form, "Font Size", fontSizeInput);
-  fieldRow(form, "Text Align", selectControl(
-    [["left", "Left"], ["center", "Center"], ["right", "Right"]],
+  fieldRow(form, "Text Alignment", iconToggleControl(
+    [
+      ["left", "Align left", ALIGN_ICON_SVG.left],
+      ["center", "Align center", ALIGN_ICON_SVG.center],
+      ["right", "Align right", ALIGN_ICON_SVG.right],
+    ],
     sel.textAlign, "center", (v) => cb.onEdit(sel.id, "textAlign", v, true),
   ));
-  fieldRow(form, "Vertical Align", selectControl(
-    [["top", "Top"], ["middle", "Middle"], ["bottom", "Bottom"]],
+  fieldRow(form, "Text Position", iconToggleControl(
+    [
+      ["top", "Position top", POSITION_ICON_SVG.top],
+      ["middle", "Position middle", POSITION_ICON_SVG.middle],
+      ["bottom", "Position bottom", POSITION_ICON_SVG.bottom],
+    ],
     sel.verticalAlign, "middle", (v) => cb.onEdit(sel.id, "verticalAlign", v, true),
   ));
 

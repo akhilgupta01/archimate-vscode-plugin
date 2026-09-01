@@ -113,6 +113,14 @@ export class ModelTreeController {
     addBtn.addEventListener('click', (e) => { e.stopPropagation(); void this.createSubfolder(folderPath); });
     row.appendChild(addBtn);
     if (!isLayerRoot) {
+      const renameBtn = el('button', 'am-view-delete', { title: 'Rename folder' });
+      renameBtn.appendChild(codicon('edit'));
+      renameBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearTimeout(this.clickTimer);
+        this.renameInline(folderPath, label, nameEl);
+      });
+      row.appendChild(renameBtn);
       const delBtn = el('button', 'am-view-delete', { title: 'Delete folder (contents move up a level)' });
       delBtn.appendChild(codicon('close'));
       delBtn.addEventListener('click', (e) => { e.stopPropagation(); void this.deleteFolder(folderPath); });
@@ -243,8 +251,8 @@ export class ModelTreeController {
   }
 
   async moveElementToFolder(elementPath: string, targetFolderPath: string): Promise<void> {
-    const id = elementPath.slice(elementPath.lastIndexOf('/') + 1);
-    const newPath = `${targetFolderPath}/${id}`;
+    const fileName = elementPath.slice(elementPath.lastIndexOf('/') + 1);
+    const newPath = `${targetFolderPath}/${fileName}`;
     if (newPath === elementPath) return;
     await this.host.storage.rename(elementPath, newPath);
     await this.refresh();

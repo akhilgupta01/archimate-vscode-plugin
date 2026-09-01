@@ -166,7 +166,9 @@ export async function listModelTree(workDir: string): Promise<ModelTreeNode[]> {
 // Finds the on-disk path of an existing element by id, searching the whole
 // layer subtree (it may have been organized into a subfolder since it was
 // created) — so an edit updates it in place instead of leaving a stray
-// duplicate back at the layer root.
+// duplicate back at the layer root. Reads each file's content rather than
+// matching on filename, since the filename now tracks the element's
+// *name* (see writeModelElement below), which can change.
 async function findModelElementPath(workDir: string, layerFolderName: string, id: string): Promise<string | null> {
   const root = safeResolve(workDir, layerFolderName);
   if (!(await exists(root))) return null;
@@ -178,8 +180,13 @@ async function findModelElementPath(workDir: string, layerFolderName: string, id
       if (item.isDirectory()) {
         const found = await search(abs);
         if (found) return found;
-      } else if (item.isFile() && item.name === `${id}.json`) {
-        return abs;
+      } else if (item.isFile() && item.name.endsWith('.json')) {
+        try {
+          const record = JSON.parse(await fs.readFile(abs, 'utf8')) as ModelElementRecord;
+          if (record.id === id) return abs;
+        } catch {
+          // Skip a corrupt/partially-written record rather than failing the search.
+        }
       }
     }
     return null;
@@ -187,9 +194,40 @@ async function findModelElementPath(workDir: string, layerFolderName: string, id
   return search(root);
 }
 
+// Strips characters that are illegal (or awkward) in a filename across
+// platforms, so a component's own name — chosen by the user, not by us —
+// can double as its JSON filename.
+function sanitizeFileName(name: string): string {
+  const cleaned = name.trim().replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
+  return cleaned || 'Unnamed';
+}
+
+// Picks a filename for `baseName` inside dirAbs that doesn't collide with a
+// *different* element already sitting there, appending " (2)", " (3)", …
+// as needed — `keepAbs` is this element's own current file (if any), which
+// is never a collision with itself.
+async function uniqueElementFileName(dirAbs: string, baseName: string, keepAbs: string | null): Promise<string> {
+  let candidate = `${baseName}.json`;
+  for (let n = 2; ; n++) {
+    const abs = path.join(dirAbs, candidate);
+    if (abs === keepAbs || !(await exists(abs))) return candidate;
+    candidate = `${baseName} (${n}).json`;
+  }
+}
+
+// The JSON filename mirrors the element's current name (e.g. "Payment
+// Gateway.json") rather than its opaque id, so it's recognizable while
+// browsing the folder in VS Code's own Explorer — matching Archi's own
+// Model Tree, which lists elements by name. The id inside the file (not
+// the filename) is still what identifies the element, so a rename here
+// just moves the file to match; findModelElementPath() above looks the
+// element up by content, never by filename.
 export async function writeModelElement(workDir: string, layerFolderName: string, record: ModelElementRecord): Promise<void> {
   const existing = await findModelElementPath(workDir, layerFolderName, record.id);
-  const target = existing ?? path.join(safeResolve(workDir, layerFolderName), `${record.id}.json`);
-  await ensureDir(path.dirname(target));
+  const dirAbs = existing ? path.dirname(existing) : safeResolve(workDir, layerFolderName);
+  await ensureDir(dirAbs);
+  const fileName = await uniqueElementFileName(dirAbs, sanitizeFileName(record.name), existing);
+  const target = path.join(dirAbs, fileName);
+  if (existing && existing !== target) await fs.rename(existing, target);
   await fs.writeFile(target, JSON.stringify(record, null, 2));
 }

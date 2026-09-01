@@ -201,8 +201,8 @@ export class Renderer {
   model: ArchimateModel;
   router = new OrthogonalRouter();
   viewport: SVGGElement;
-  edgeLayer: SVGGElement;
-  nodeLayer: SVGGElement;
+  /** Elements and edges share one layer (rather than a fixed edges-under-nodes split) so reorderByContainment() can interleave them by nesting depth — otherwise a relationship into/out of a nested element would always render underneath the container box it has to cross to reach it. */
+  contentLayer: SVGGElement;
   guideLayer: SVGGElement;
   elementDom = new Map<string, SVGGElement>();
   edgeDom = new Map<string, SVGGElement>();
@@ -229,11 +229,9 @@ export class Renderer {
     this.onSegmentPointerDown = callbacks.onSegmentPointerDown;
     buildDefs(svg);
     this.viewport = svgEl("g", { class: "am-viewport" });
-    this.edgeLayer = svgEl("g", { class: "am-edges" });
-    this.nodeLayer = svgEl("g", { class: "am-nodes" });
+    this.contentLayer = svgEl("g", { class: "am-content" });
     this.guideLayer = svgEl("g", { class: "am-guides" });
-    this.viewport.appendChild(this.edgeLayer);
-    this.viewport.appendChild(this.nodeLayer);
+    this.viewport.appendChild(this.contentLayer);
     this.viewport.appendChild(this.guideLayer);
     svg.appendChild(this.viewport);
   }
@@ -256,8 +254,7 @@ export class Renderer {
 
   fullRender(): void {
     this.router.resetLanes();
-    this.edgeLayer.replaceChildren();
-    this.nodeLayer.replaceChildren();
+    this.contentLayer.replaceChildren();
     this.elementDom.clear();
     this.edgeDom.clear();
     for (const el of this.model.elements.values()) this.renderElement(el);
@@ -265,26 +262,44 @@ export class Renderer {
     this.reorderByContainment();
   }
 
-  // Keeps nested (child) elements drawn on top of the container they're
-  // nested inside, by re-appending each element's <g> in ascending
-  // parent-chain depth order (SVG paints later siblings on top).
-  reorderByContainment(): void {
-    const depthOf = (id: string): number => {
-      let depth = 0;
-      let cur = this.model.getElement(id);
-      const seen = new Set<string>();
-      while (cur?.parentId && !seen.has(cur.id)) {
-        seen.add(cur.id);
-        cur = this.model.getElement(cur.parentId);
-        depth++;
-      }
-      return depth;
-    };
-    const sorted = [...this.model.elements.values()].sort((a, b) => depthOf(a.id) - depthOf(b.id));
-    for (const elObj of sorted) {
-      const g = this.elementDom.get(elObj.id);
-      if (g) this.nodeLayer.appendChild(g);
+  private _nestingDepthOf(id: string): number {
+    let depth = 0;
+    let cur = this.model.getElement(id);
+    const seen = new Set<string>();
+    while (cur?.parentId && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      cur = this.model.getElement(cur.parentId);
+      depth++;
     }
+    return depth;
+  }
+
+  // Keeps nested (child) elements — and any relationship touching one —
+  // drawn on top of the container(s) they're nested inside, by
+  // re-appending each element's/edge's <g> into the single shared content
+  // layer in ascending depth order (SVG paints later siblings on top). A
+  // relationship uses the deeper of its two endpoints' depth, so e.g. an
+  // edge between two elements nested one level in still ends up above
+  // both their containers — otherwise it would render underneath them
+  // (containers are opaque boxes) and be invisible wherever its routed
+  // path has to cross one to reach its nested endpoint.
+  reorderByContainment(): void {
+    const depthOf = (id: string) => this._nestingDepthOf(id);
+    type Item = { depth: number; g: SVGGElement };
+    const items: Item[] = [];
+    for (const elObj of this.model.elements.values()) {
+      const g = this.elementDom.get(elObj.id);
+      if (g) items.push({ depth: depthOf(elObj.id), g });
+    }
+    for (const rel of this.model.relationships.values()) {
+      const g = this.edgeDom.get(rel.id);
+      if (g) items.push({ depth: Math.max(depthOf(rel.source), depthOf(rel.target)), g });
+    }
+    // Array.prototype.sort is stable, so elements/edges already at equal
+    // depth keep their relative order above — elements were pushed first,
+    // so same-depth edges (pushed after) still sort after them, i.e. on top.
+    items.sort((a, b) => a.depth - b.depth);
+    for (const { g } of items) this.contentLayer.appendChild(g);
   }
 
   renderElement(el: ArchimateElement): void {
@@ -299,7 +314,7 @@ export class Renderer {
       g.addEventListener("pointerdown", (e) =>
         this.onElementPointerDown!(e, el.id),
       );
-    this.nodeLayer.appendChild(g);
+    this.contentLayer.appendChild(g);
     this.elementDom.set(el.id, g);
   }
 
@@ -466,7 +481,7 @@ export class Renderer {
           e.stopPropagation();
           this.onEdgeClick!(e, rel.id);
         });
-      this.edgeLayer.appendChild(g);
+      this.contentLayer.appendChild(g);
       this.edgeDom.set(rel.id, g);
     }
     const pts =
