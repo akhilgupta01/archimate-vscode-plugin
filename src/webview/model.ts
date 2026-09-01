@@ -132,6 +132,9 @@ export const RELATIONSHIP_TYPES = {
 
 export type RelationshipType = keyof typeof RELATIONSHIP_TYPES;
 
+export type LineWidth = 'thin' | 'normal' | 'thick';
+export const LINE_WIDTH_PX: Record<LineWidth, number> = { thin: 1, normal: 1.5, thick: 3 };
+
 export interface Bounds { x: number; y: number; w: number; h: number; }
 export interface Point { x: number; y: number; }
 export interface Port { side: 'n' | 's' | 'e' | 'w'; t: number; }
@@ -152,6 +155,20 @@ export interface ArchimateElementProps {
   documentation?: string;
   /** id of the element this one is nested inside (visual containment), or null/undefined if top-level. */
   parentId?: string | null;
+  // Appearance overrides — unset (null/undefined) means "use the layer
+  // default", same convention Archi uses for its Appearance tab.
+  fillColor?: string | null;
+  /** 0-255, matching Archi's own alpha convention (not the 0-1 SVG scale). */
+  fillOpacity?: number | null;
+  lineColor?: string | null;
+  /** 0-255, matching Archi's own alpha convention (not the 0-1 SVG scale). */
+  lineOpacity?: number | null;
+  lineWidth?: LineWidth | null;
+  lineStyle?: RelationshipStyle | null;
+  iconColor?: string | null;
+  fontColor?: string | null;
+  fontFamily?: string | null;
+  fontSize?: number | null;
 }
 
 export class ArchimateElement {
@@ -164,8 +181,22 @@ export class ArchimateElement {
   h: number;
   documentation: string;
   parentId: string | null;
+  fillColor: string | null;
+  fillOpacity: number | null;
+  lineColor: string | null;
+  lineOpacity: number | null;
+  lineWidth: LineWidth | null;
+  lineStyle: RelationshipStyle | null;
+  iconColor: string | null;
+  fontColor: string | null;
+  fontFamily: string | null;
+  fontSize: number | null;
 
-  constructor({ id, type, name, x = 0, y = 0, w = 140, h = 55, documentation = '', parentId = null }: ArchimateElementProps) {
+  constructor({
+    id, type, name, x = 0, y = 0, w = 140, h = 55, documentation = '', parentId = null,
+    fillColor = null, fillOpacity = null, lineColor = null, lineOpacity = null,
+    lineWidth = null, lineStyle = null, iconColor = null, fontColor = null, fontFamily = null, fontSize = null,
+  }: ArchimateElementProps) {
     if (!ELEMENT_TYPES[type]) throw new Error(`Unknown ArchiMate element type: ${type}`);
     this.id = id || nextId('elem');
     this.type = type;
@@ -176,9 +207,49 @@ export class ArchimateElement {
     this.h = h;
     this.documentation = documentation;
     this.parentId = parentId ?? null;
+    this.fillColor = fillColor ?? null;
+    this.fillOpacity = fillOpacity ?? null;
+    this.lineColor = lineColor ?? null;
+    this.lineOpacity = lineOpacity ?? null;
+    this.lineWidth = lineWidth ?? null;
+    this.lineStyle = lineStyle ?? null;
+    this.iconColor = iconColor ?? null;
+    this.fontColor = fontColor ?? null;
+    this.fontFamily = fontFamily ?? null;
+    this.fontSize = fontSize ?? null;
   }
   get layer(): LayerKey { return ELEMENT_TYPES[this.type].layer as LayerKey; }
   bounds(): Bounds { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
+}
+
+/** Just the Appearance-tab fields of an element — e.g. what the canvas's Format Painter tool copies from one element and stamps onto another. */
+export interface AppearanceSnapshot {
+  fillColor: string | null;
+  fillOpacity: number | null;
+  lineColor: string | null;
+  lineOpacity: number | null;
+  lineWidth: LineWidth | null;
+  lineStyle: RelationshipStyle | null;
+  iconColor: string | null;
+  fontColor: string | null;
+  fontFamily: string | null;
+  fontSize: number | null;
+}
+export function captureAppearance(el: ArchimateElement): AppearanceSnapshot {
+  return {
+    fillColor: el.fillColor, fillOpacity: el.fillOpacity,
+    lineColor: el.lineColor, lineOpacity: el.lineOpacity,
+    lineWidth: el.lineWidth, lineStyle: el.lineStyle,
+    iconColor: el.iconColor,
+    fontColor: el.fontColor, fontFamily: el.fontFamily, fontSize: el.fontSize,
+  };
+}
+export function applyAppearance(el: ArchimateElement, snap: AppearanceSnapshot): void {
+  el.fillColor = snap.fillColor; el.fillOpacity = snap.fillOpacity;
+  el.lineColor = snap.lineColor; el.lineOpacity = snap.lineOpacity;
+  el.lineWidth = snap.lineWidth; el.lineStyle = snap.lineStyle;
+  el.iconColor = snap.iconColor;
+  el.fontColor = snap.fontColor; el.fontFamily = snap.fontFamily; el.fontSize = snap.fontSize;
 }
 
 export interface ArchimateRelationshipProps {

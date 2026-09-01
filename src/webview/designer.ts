@@ -1,4 +1,4 @@
-import { ArchimateModel, ArchimateElement, ArchimateRelationship, ELEMENT_TYPES, LAYERS, ElementType, RelationshipType, ModelJSON } from './model.js';
+import { ArchimateModel, ArchimateElement, ArchimateRelationship, ELEMENT_TYPES, LAYERS, ElementType, RelationshipType, ModelJSON, AppearanceSnapshot, captureAppearance, applyAppearance } from './model.js';
 import { Renderer } from './renderer.js';
 import { GRID_SIZE } from './snap.js';
 import { LocalStorageAdapter } from './storage/LocalStorageAdapter.js';
@@ -7,7 +7,7 @@ import { humanize } from './paletteData.js';
 import { canNest } from './relationshipRules.js';
 import { ViewsPanel } from './viewsPanel.js';
 import { buildPaletteDom } from './paletteView.js';
-import { renderInspectorDom, INSPECTOR_EMPTY_HTML, Selection } from './inspectorView.js';
+import { renderInspectorDom, INSPECTOR_EMPTY_HTML, Selection, isAppearanceField, AppearanceField } from './inspectorView.js';
 import { CanvasInteractions } from './canvasInteractions.js';
 import { el } from './domUtil.js';
 import { SVG_NS } from './svgUtil.js';
@@ -47,6 +47,8 @@ export class ArchimateDesigner {
   activeRelType: RelationshipType | null = null;
   armedElementType: ElementType | null = null;
   pendingSource: string | null = null;
+  /** Set by the Format Painter toolbar button: the appearance captured from whichever element was selected when it was clicked, waiting for a target element click to apply to. */
+  formatPainterAppearance: AppearanceSnapshot | null = null;
   currentViewPath: string | null = null;
   paletteCollapsed = false;
   externalFileUri: string | null = null;
@@ -64,6 +66,7 @@ export class ArchimateDesigner {
   statusEl!: HTMLDivElement;
   private zoomLabel!: HTMLSpanElement;
   private paletteScroll?: HTMLDivElement;
+  private formatPainterBtn?: HTMLButtonElement;
 
   private hostApi: HostApi | null = null;
   private embeddedPalette = true;
@@ -99,6 +102,7 @@ export class ArchimateDesigner {
         if (d.type === 'archiToolArm') this._armTool(d.kind, d.archiType);
         else if (d.type === 'archiInspectorEdit') this._applyInspectorEdit(d.id, d.field, d.value, d.final);
         else if (d.type === 'archiInspectorReroute') this._applyInspectorReroute(d.id);
+        else if (d.type === 'archiInspectorReset') this._resetAppearance(d.id);
       });
     }
     this.renderer.fullRender();
@@ -235,6 +239,10 @@ export class ArchimateDesigner {
     zoomIn.addEventListener('click', () => this.setZoom(this.zoom * 1.15));
     const zoomReset = el('button', 'am-btn', { title: 'Reset zoom' }); zoomReset.textContent = '⤢';
     zoomReset.addEventListener('click', () => this.resetView());
+    const formatPainter = el('button', 'am-btn', { title: 'Format Painter: select an element, click this, then click another element to copy its Appearance (colours, line style, font) onto it' });
+    formatPainter.textContent = '🖌';
+    formatPainter.addEventListener('click', () => this._toggleFormatPainter());
+    this.formatPainterBtn = formatPainter;
     const del = el('button', 'am-btn', { title: 'Delete selected' }); del.textContent = 'Delete';
     del.addEventListener('click', () => this.deleteSelected());
     const saveBtn = el('button', 'am-btn am-btn-primary', { title: 'Save view' }); saveBtn.textContent = 'Save';
@@ -246,7 +254,7 @@ export class ArchimateDesigner {
     const importBtn = el('button', 'am-btn', { title: 'Import JSON file' }); importBtn.textContent = 'Import';
     importBtn.addEventListener('click', () => importInput.click());
 
-    toolbar.append(status, spacer, zoomOut, zoomLabel, zoomIn, zoomReset, del, importBtn, importInput, exportBtn, saveBtn);
+    toolbar.append(status, spacer, zoomOut, zoomLabel, zoomIn, zoomReset, formatPainter, del, importBtn, importInput, exportBtn, saveBtn);
   }
 
   private _buildInspector(): void {
@@ -324,12 +332,15 @@ export class ArchimateDesigner {
     this._notifyToolArmed();
   }
 
-  /** Clears whatever tool is currently armed (relationship or element), embedded or host-driven. */
+  /** Clears whatever tool is currently armed (relationship, element, or Format Painter), embedded or host-driven. */
   _cancelActiveTool(): void {
     this.activeRelType = null;
     this.pendingSource = null;
     this.armedElementType = null;
+    this.formatPainterAppearance = null;
     this.paletteScroll?.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
+    this.formatPainterBtn?.classList.remove('am-active');
+    this.svg.classList.remove('am-paint-cursor');
     this._updateArmedStatus();
     this._notifyToolArmed();
   }
@@ -340,11 +351,54 @@ export class ArchimateDesigner {
       this.statusEl.textContent = `Click a source element, then a target element to draw a ${humanize(this.activeRelType)} relationship. Esc to cancel.`;
     } else if (this.armedElementType) {
       this.statusEl.textContent = `Click on the canvas to place a ${humanize(this.armedElementType)}. Esc to cancel.`;
+    } else if (this.formatPainterAppearance) {
+      this.statusEl.textContent = 'Format Painter armed — click another element to copy the appearance onto it. Esc to cancel.';
     } else {
       this.statusEl.textContent = this.embeddedPalette
         ? 'Drag elements from the palette onto the canvas.'
         : 'Select a tool from the Palette view, then click the canvas.';
     }
+  }
+
+  // ================= format painter =================
+  // Mirrors Word/PowerPoint's format painter: capture the Appearance of
+  // whichever single element is selected right now, then apply it to the
+  // next element clicked (see CanvasInteractions.onElementPointerDown).
+  // Single-use — applying (or Esc, or an empty-canvas click) disarms it,
+  // same as the relationship-drawing tool.
+  private _toggleFormatPainter(): void {
+    if (this.formatPainterAppearance) { this._cancelActiveTool(); return; }
+    if (this.selected.size !== 1) {
+      this._flashStatus('Select a single element first, then click Format Painter.');
+      return;
+    }
+    const elModel = this.model.getElement([...this.selected][0]);
+    if (!elModel) {
+      this._flashStatus('Select an element (not a relationship) first, then click Format Painter.');
+      return;
+    }
+    this.activeRelType = null;
+    this.armedElementType = null;
+    this.pendingSource = null;
+    this.paletteScroll?.querySelectorAll('.am-icon-btn-rel').forEach(i => i.classList.remove('am-active'));
+    this.formatPainterAppearance = captureAppearance(elModel);
+    this.formatPainterBtn?.classList.add('am-active');
+    this.svg.classList.add('am-paint-cursor');
+    this._updateArmedStatus();
+    this._notifyToolArmed();
+  }
+
+  /** Applies the captured Format Painter appearance onto `targetId` and disarms the tool. */
+  _applyFormatPainter(targetId: string): void {
+    const snap = this.formatPainterAppearance;
+    if (!snap) return;
+    const targetEl = this.model.getElement(targetId);
+    this._cancelActiveTool();
+    if (!targetEl) return;
+    applyAppearance(targetEl, snap);
+    this.renderer.updateElementGeometry(targetEl);
+    this._setSelection(new Set([targetId]));
+    this._afterModelChange();
   }
 
   /** Tells the host (VS Code extension, relaying to the sidebar palette view) what's armed now, so its highlight stays in sync. Harmless no-op in embedded mode (no host). */
@@ -371,6 +425,7 @@ export class ArchimateDesigner {
     renderInspectorDom(this.inspector!, this._currentSelection(), {
       onEdit: (id, field, value, final) => this._applyInspectorEdit(id, field, value, final),
       onReroute: (id) => this._applyInspectorReroute(id),
+      onResetAppearance: (id) => this._resetAppearance(id),
     });
   }
 
@@ -388,7 +443,18 @@ export class ArchimateDesigner {
     const id = [...this.selected][0];
     const elModel = this.model.getElement(id);
     const relModel = this.model.relationships.get(id);
-    if (elModel) return { kind: 'element', id, type: elModel.type, name: elModel.name, documentation: elModel.documentation || '' };
+    if (elModel) {
+      const layer = LAYERS[ELEMENT_TYPES[elModel.type].layer];
+      return {
+        kind: 'element', id, type: elModel.type, name: elModel.name, documentation: elModel.documentation || '',
+        fillColor: elModel.fillColor, fillOpacity: elModel.fillOpacity,
+        lineColor: elModel.lineColor, lineOpacity: elModel.lineOpacity,
+        lineWidth: elModel.lineWidth, lineStyle: elModel.lineStyle,
+        iconColor: elModel.iconColor,
+        fontColor: elModel.fontColor, fontFamily: elModel.fontFamily, fontSize: elModel.fontSize,
+        defaultFillColor: layer.color, defaultLineColor: layer.stroke,
+      };
+    }
     if (relModel) return { kind: 'relationship', id, type: relModel.type, name: relModel.name || '' };
     return null;
   }
@@ -406,8 +472,46 @@ export class ArchimateDesigner {
     const relModel = this.model.relationships.get(id);
     if (elModel && field === 'name') { elModel.name = value; this.renderer.updateElementLabel(elModel); }
     else if (elModel && field === 'documentation') { elModel.documentation = value; }
+    else if (elModel && isAppearanceField(field)) { this._applyAppearanceEdit(elModel, field, value); }
     else if (relModel && field === 'name') { relModel.name = value; this.renderer.renderEdge(relModel); }
     if (final) this._afterModelChange();
+  }
+
+  private _applyAppearanceEdit(elModel: ArchimateElement, field: AppearanceField, value: string): void {
+    switch (field) {
+      case 'fillColor': elModel.fillColor = value || null; break;
+      case 'lineColor': elModel.lineColor = value || null; break;
+      case 'iconColor': elModel.iconColor = value || null; break;
+      case 'fontColor': elModel.fontColor = value || null; break;
+      case 'fontFamily': elModel.fontFamily = value || null; break;
+      case 'fillOpacity': elModel.fillOpacity = value === '' ? null : Math.min(255, Math.max(0, Number(value))); break;
+      case 'lineOpacity': elModel.lineOpacity = value === '' ? null : Math.min(255, Math.max(0, Number(value))); break;
+      case 'fontSize': elModel.fontSize = value === '' ? null : Math.max(6, Number(value)); break;
+      case 'lineWidth': elModel.lineWidth = (value || null) as ArchimateElement['lineWidth']; break;
+      case 'lineStyle': elModel.lineStyle = (value || null) as ArchimateElement['lineStyle']; break;
+    }
+    this.renderer.updateElementGeometry(elModel);
+  }
+
+  private _resetAppearance(id: string): void {
+    const elModel = this.model.getElement(id);
+    if (!elModel) return;
+    elModel.fillColor = null;
+    elModel.fillOpacity = null;
+    elModel.lineColor = null;
+    elModel.lineOpacity = null;
+    elModel.lineWidth = null;
+    elModel.lineStyle = null;
+    elModel.iconColor = null;
+    elModel.fontColor = null;
+    elModel.fontFamily = null;
+    elModel.fontSize = null;
+    this.renderer.updateElementGeometry(elModel);
+    // Several fields changed at once, so re-render the whole panel (like a
+    // fresh selection) rather than trying to patch each control in place.
+    if (this.inspector) this._renderInspector();
+    if (this.hostApi) this._notifySelectionChanged();
+    this._afterModelChange();
   }
 
   private _applyInspectorReroute(id: string): void {
@@ -426,7 +530,7 @@ export class ArchimateDesigner {
           this.addElement(type, pt.x - 70, pt.y - 27);
           return;
         }
-        if (this.activeRelType) {
+        if (this.activeRelType || this.formatPainterAppearance) {
           this._cancelActiveTool();
           return;
         }
@@ -610,10 +714,11 @@ export class ArchimateDesigner {
     this._afterModelChange();
   }
 
+  /** Called after every model edit; debounces an actual save so the canvas is always persisted without the user needing to click Save themselves. */
   _afterModelChange(): void {
     if (this.changeTimer) clearTimeout(this.changeTimer);
     this.changeTimer = setTimeout(() => {
-      try { localStorage.setItem(this.storageKey + ':autosave', JSON.stringify(this.model.toJSON())); } catch { /* storage unavailable */ }
+      this.save().catch(err => this._flashStatus('Autosave failed: ' + (err as Error).message));
     }, 400);
   }
 

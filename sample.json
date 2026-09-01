@@ -1,0 +1,56 @@
+{
+  "model": {
+    "elements": [
+      {
+        "id": "elem-mti5glqx-1",
+        "type": "ApplicationComponent",
+        "name": "Application Component",
+        "x": 251.546875,
+        "y": 49.953125,
+        "w": 140,
+        "h": 55,
+        "documentation": "",
+        "parentId": null,
+        "fillColor": null,
+        "fillOpacity": null,
+        "lineColor": null,
+        "lineOpacity": null,
+        "lineWidth": null,
+        "lineStyle": null,
+        "iconColor": null,
+        "fontColor": null,
+        "fontFamily": null,
+        "fontSize": null
+      },
+      {
+        "id": "elem-mti7zdvf-1",
+        "type": "ApplicationCollaboration",
+        "name": "Application Collaboration",
+        "x": 438.73828125,
+        "y": 49.953125,
+        "w": 140,
+        "h": 55,
+        "documentation": "",
+        "parentId": null,
+        "fillColor": null,
+        "fillOpacity": null,
+        "lineColor": null,
+        "lineOpacity": null,
+        "lineWidth": null,
+        "lineStyle": null,
+        "iconColor": null,
+        "fontColor": null,
+        "fontFamily": null,
+        "fontSize": null
+      }
+    ],
+    "relationships": []
+  },
+  "view": {
+    "zoom": 1,
+    "pan": {
+      "x": 40,
+      "y": 40
+    }
+  }
+}

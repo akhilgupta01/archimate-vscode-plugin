@@ -7,7 +7,7 @@
 // into `window`/`document` throughout for drag listeners and the nesting
 // dialog), so this is verified by hand in the browser instead.
 
-import { ArchimateElement, ArchimateModel, ArchimateRelationship, RelationshipType } from './model.js';
+import { ArchimateElement, ArchimateModel, ArchimateRelationship, RelationshipType, AppearanceSnapshot } from './model.js';
 import type { Renderer } from './renderer.js';
 import { computeMoveSnap, computeResizedBox, enforceMinSize, computeResizeSnap, ResizeHandle, GRID_SIZE } from './snap.js';
 import { snappedPerimeterPoint, nearestPerimeterPoint, simplifyCollinear } from './router.js';
@@ -31,9 +31,11 @@ export interface CanvasInteractionsHost {
   statusEl: HTMLDivElement;
   activeRelType: RelationshipType | null;
   pendingSource: string | null;
+  formatPainterAppearance: AppearanceSnapshot | null;
   _setSelection(idSet: Set<string>): void;
   _afterModelChange(): void;
   _cancelActiveTool(): void;
+  _applyFormatPainter(targetId: string): void;
   addRelationship(type: RelationshipType, sourceId: string, targetId: string, opts?: { name?: string }): ArchimateRelationship;
   _clientToWorld(cx: number, cy: number): { x: number; y: number };
 }
@@ -45,6 +47,10 @@ export class CanvasInteractions {
   onElementPointerDown(e: PointerEvent, id: string): void {
     e.stopPropagation();
     const host = this.host;
+    if (host.formatPainterAppearance) {
+      host._applyFormatPainter(id);
+      return;
+    }
     if (host.activeRelType) {
       if (!host.pendingSource) {
         host.pendingSource = id;
@@ -312,6 +318,10 @@ export class CanvasInteractions {
   onEdgeClick(e: PointerEvent, id: string): void {
     const host = this.host;
     if (host.activeRelType) return;
+    // Relationships have no Appearance fields to paint onto, so a click here
+    // while the tool is armed simply falls through to normal selection —
+    // it doesn't apply anything, but doesn't cancel the tool either.
+    if (host.formatPainterAppearance) return;
     if (e.shiftKey) {
       const next = new Set(host.selected);
       if (next.has(id)) next.delete(id); else next.add(id);

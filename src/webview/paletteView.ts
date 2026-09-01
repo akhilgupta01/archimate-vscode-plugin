@@ -8,7 +8,7 @@
 // isolated sidebar webview can't drag-and-drop onto the canvas), so callers
 // wire their own listeners onto the returned button maps.
 
-import { ElementType, RelationshipType, LAYERS } from './model.js';
+import { ElementType, RelationshipType, LAYERS, LayerKey } from './model.js';
 import { elementIcon, relationshipIcon } from './icons.js';
 import { PALETTE_GROUPS, RELATIONSHIP_LIST, humanize } from './paletteData.js';
 import { el } from './domUtil.js';
@@ -19,6 +19,23 @@ export interface PaletteDom {
   elementButtons: Map<ElementType, HTMLButtonElement>;
   relButtons: Map<RelationshipType, HTMLButtonElement>;
 }
+
+// Element/relationship types whose palette icon (see icons.ts — a crop of a
+// reference tool's palette, not a themeable vector) is a single flat colour
+// (pure black, no layer-tint fill), verified by inspecting the underlying
+// PNGs' pixel data. Marked with .am-icon-mono so style.css can safely invert
+// just these to stay visible on a dark theme — inverting an icon that *does*
+// have a colour fill (e.g. the light-cyan Application tint) would corrupt it.
+const MONOCHROME_ICON_TYPES = new Set<string>([
+  'Composition', 'Aggregation', 'Assignment', 'Realization', 'Serving',
+  'Access', 'Influence', 'Triggering', 'Flow', 'Specialization', 'Association',
+  'Grouping', 'Junction', 'Plateau',
+]);
+
+// These layers are used far less often than Business/Application/Technology,
+// so they start folded to keep the palette scannable — the user can still
+// expand any of them with a click, same as collapsing any other section.
+const DEFAULT_COLLAPSED_LAYERS = new Set<LayerKey>(['strategy', 'motivation', 'implementation', 'other']);
 
 export function buildPaletteDom(): PaletteDom {
   const searchInput = el('input', 'am-palette-search');
@@ -36,7 +53,8 @@ export function buildPaletteDom(): PaletteDom {
   relSection.appendChild(relHeader);
   const relGrid = el('div', 'am-icon-grid');
   for (const type of RELATIONSHIP_LIST) {
-    const btn = el('button', 'am-icon-btn am-icon-btn-rel', { title: humanize(type), type: 'button' });
+    const cls = 'am-icon-btn am-icon-btn-rel' + (MONOCHROME_ICON_TYPES.has(type) ? ' am-icon-mono' : '');
+    const btn = el('button', cls, { title: humanize(type), type: 'button' });
     btn.dataset.kind = 'relationship';
     btn.dataset.type = type;
     btn.appendChild(relationshipIcon(type));
@@ -48,7 +66,8 @@ export function buildPaletteDom(): PaletteDom {
 
   for (const group of PALETTE_GROUPS) {
     const layer = LAYERS[group.layer];
-    const section = el('div', 'am-palette-section');
+    const sectionCls = 'am-palette-section' + (DEFAULT_COLLAPSED_LAYERS.has(group.layer) ? ' am-collapsed' : '');
+    const section = el('div', sectionCls);
     const header = el('div', 'am-palette-header');
     header.style.setProperty('--am-layer-color', layer.color);
     header.style.setProperty('--am-layer-stroke', layer.stroke);
@@ -57,7 +76,8 @@ export function buildPaletteDom(): PaletteDom {
     section.appendChild(header);
     const grid = el('div', 'am-icon-grid');
     for (const type of group.types) {
-      const btn = el('button', 'am-icon-btn', { title: humanize(type), type: 'button' });
+      const cls = 'am-icon-btn' + (MONOCHROME_ICON_TYPES.has(type) ? ' am-icon-mono' : '');
+      const btn = el('button', cls, { title: humanize(type), type: 'button' });
       btn.dataset.kind = 'element';
       btn.dataset.type = type;
       btn.style.setProperty('--am-layer-stroke', layer.stroke);

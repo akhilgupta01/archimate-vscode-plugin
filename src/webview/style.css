@@ -249,6 +249,9 @@
 .am-svg.am-place-cursor {
   cursor: crosshair;
 }
+.am-svg.am-paint-cursor {
+  cursor: copy;
+}
 .am-marquee {
   position: absolute;
   border: 1px solid var(--am-accent);
@@ -326,14 +329,21 @@
 .am-palette-search {
   margin: 6px 8px;
   padding: 5px 8px;
-  border: 1px solid var(--am-border);
+  border: 1px solid var(--vscode-input-border, var(--am-border));
   border-radius: 6px;
   font-size: 12px;
   outline: none;
   flex: 0 0 auto;
+  background: var(--vscode-input-background, #fff);
+  color: var(--vscode-input-foreground, var(--am-text));
+}
+.am-palette-search::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--am-text-dim));
 }
 .am-palette-search:focus {
-  border-color: var(--am-accent);
+  border-color: var(--vscode-focusBorder, var(--am-accent));
+  outline: 1px solid var(--vscode-focusBorder, var(--am-accent));
+  outline-offset: -1px;
 }
 .am-palette-scroll {
   flex: 1;
@@ -341,7 +351,7 @@
   padding-bottom: 8px;
 }
 .am-palette-section {
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--vscode-panel-border, #f0f0f0);
 }
 .am-palette-header {
   padding: 6px 10px;
@@ -349,12 +359,17 @@
   font-weight: 600;
   cursor: pointer;
   user-select: none;
-  background: color-mix(in srgb, var(--am-layer-color, #eee) 35%, white);
+  color: var(--vscode-foreground, var(--am-text));
+  /* Blends the layer's notation colour toward the *current* panel
+     background rather than a fixed white, so the same pastel-tinted
+     section header reads correctly on both a light and a dark theme
+     instead of turning into a washed-out light patch on a dark sidebar. */
+  background: color-mix(in srgb, var(--am-layer-color, #eee) 35%, var(--vscode-sideBar-background, white));
   border-left: 4px solid var(--am-layer-stroke, #999);
 }
 .am-palette-header-rel {
-  background: #f2f2f2;
-  border-left: 4px solid #888;
+  background: var(--vscode-sideBarSectionHeader-background, #f2f2f2);
+  border-left: 4px solid var(--vscode-descriptionForeground, #888);
 }
 .am-palette-section.am-collapsed .am-icon-grid {
   display: none;
@@ -367,24 +382,27 @@
   grid-template-columns: repeat(auto-fill, 22px);
   gap: 2px;
   padding: 3px;
-  background: #eceff3;
-  border-top: 1px solid #eceff3;
 }
 .am-icon-btn {
   border: none;
-  background: #fff;
+  /* Transparent, not a solid fill: a grid of opaque white squares is what
+     actually made this look pasted-in on a dark theme — an icon-only
+     toolbar button should show no chrome until hovered/armed, matching
+     VS Code's own toolbar buttons. */
+  background: transparent;
   cursor: grab;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 22px;
+  border-radius: 3px;
 }
 .am-icon-btn:hover {
-  background: #eef2ff;
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, #eef2ff));
 }
 .am-icon-btn.am-active {
-  background: #dbe6ff;
-  box-shadow: inset 0 0 0 1.5px var(--am-accent);
+  background: var(--vscode-list-activeSelectionBackground, #dbe6ff);
+  box-shadow: inset 0 0 0 1.5px var(--vscode-focusBorder, var(--am-accent));
 }
 .am-icon-btn-rel {
   cursor: pointer;
@@ -396,6 +414,23 @@
   height: auto;
   display: block;
   -webkit-user-drag: none;
+}
+/* .am-icon-mono marks icons that are a flat single colour (pure black,
+   verified against the actual PNG pixel data — see paletteView.ts's
+   MONOCHROME_ICON_TYPES) with no layer-colour fill to protect, unlike most
+   element icons — so on a dark theme they can just be flipped to white for
+   contrast instead of staying invisible black-on-near-black. VS Code
+   documents body.vscode-dark as the reliable way to detect theme kind
+   inside a webview; the media query is a fallback for contexts outside
+   VS Code (the dev-preview harness) where that class is never added. */
+body.vscode-dark .am-icon-mono .am-icon-img,
+body.vscode-high-contrast .am-icon-mono .am-icon-img {
+  filter: invert(1);
+}
+@media (prefers-color-scheme: dark) {
+  .am-icon-mono .am-icon-img {
+    filter: invert(1);
+  }
 }
 
 .am-drag-ghost {
@@ -658,27 +693,104 @@
 .am-inspector {
   flex: 1 1 40%;
   min-height: 0;
-  overflow-y: auto;
-  padding: 10px;
+  overflow: hidden;
+  padding: 0;
   font-size: 12.5px;
+  background: var(--vscode-sideBar-background, #f3f3f3);
 }
 .am-inspector-empty {
   color: var(--vscode-descriptionForeground, var(--am-text-dim));
   line-height: 1.5;
+  padding: 12px;
+}
+.am-inspector-panel {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--vscode-sideBar-background, #f3f3f3);
+}
+.am-inspector-sidebar {
+  background: var(--vscode-sideBar-background, #f3f3f3);
+  border-right: 1px solid var(--vscode-sideBar-border, var(--am-border));
+  min-width: 0;
+}
+.am-inspector-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0 0;
+}
+.am-inspector-tab {
+  appearance: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--vscode-foreground, var(--am-text));
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  padding: 8px 10px 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 0;
+}
+.am-inspector-tab:hover {
+  background: var(--vscode-list-hoverBackground, #ececec);
+}
+.am-inspector-tab.is-active {
+  background: var(--vscode-list-activeSelectionBackground, #dfeaf8);
+  color: var(--vscode-list-activeSelectionForeground, var(--am-text));
+  border-left: 2px solid var(--vscode-focusBorder, var(--am-accent));
+  padding-left: 10px;
+  font-weight: 600;
+}
+.am-inspector-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.am-inspector-header {
+  background: var(--vscode-sideBarSectionHeader-background, #e2e2e2);
+  border-bottom: 1px solid var(--vscode-sideBar-border, var(--am-border));
+  padding: 10px 12px;
 }
 .am-inspector-title {
   font-weight: 600;
-  margin-bottom: 10px;
-  font-size: 13px;
-  color: var(--vscode-foreground, var(--am-text));
+  font-size: 12.5px;
+  color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground, var(--am-text)));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.am-inspector-form {
+  padding: 6px 12px 14px;
+  overflow-y: auto;
+  /* The Inspector is docked either as a narrow sidebar (~250-350px) or a
+     wide bottom panel (1000px+) — a query container lets each row switch
+     layout based on the space it's actually been given, not the viewport. */
+  container-type: inline-size;
+  container-name: am-inspector-form;
+}
+/* Default: label above a full-width control. Below the container-query
+   threshold (a VS Code sidebar), a fixed label column (Archi's own desktop
+   panel is far wider than that) would leave too little room for the
+   control — a color swatch, a number, a select all need to stay legible. */
+.am-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0;
 }
 .am-field-label {
   display: block;
-  margin: 10px 0 4px;
-  color: var(--vscode-descriptionForeground, var(--am-text-dim));
+  color: var(--vscode-descriptionForeground, #4d4d4d);
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-transform: none;
+  letter-spacing: normal;
+  margin: 0;
 }
 /* Field styling favors VS Code's own input theme tokens (falling back to
    our light-mode defaults for the no-VS-Code dev-preview harness) — a
@@ -687,14 +799,42 @@
 .am-field-input,
 .am-field-textarea {
   width: 100%;
+  max-width: 320px;
+  min-width: 0;
   box-sizing: border-box;
-  padding: 6px 8px;
+  height: 18px;
+  padding: 2px 6px;
   border: 1px solid var(--vscode-input-border, var(--am-border));
-  border-radius: 4px;
-  font-size: 12.5px;
+  border-radius: 3px;
+  font-size: 11px;
   font-family: inherit;
   background: var(--vscode-input-background, #f4f4f4);
   color: var(--vscode-input-foreground, var(--am-text));
+}
+/* A 0-255 opacity or 6-72 font size never needs 320px to show 2-3 digits —
+   capping it separately keeps it from ballooning in the wide bottom-panel
+   layout the way the color/select fields reasonably can. */
+input[type="number"].am-field-input {
+  max-width: 90px;
+}
+/* Once there's real width to spend (the bottom-panel dock, not the
+   sidebar), lay each row out the way Archi's own wide desktop panel does:
+   label on the left, control on the right — denser, and it reads as one
+   coherent form instead of a long single column of oversized bars. */
+@container am-inspector-form (min-width: 460px) {
+  .am-form-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+  .am-form-row > .am-field-label {
+    flex: 0 0 110px;
+    white-space: nowrap;
+  }
+  .am-form-row > :not(.am-field-label) {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
 }
 .am-field-input::placeholder,
 .am-field-textarea::placeholder {
@@ -706,6 +846,65 @@
   outline-offset: -1px;
 }
 .am-field-textarea {
-  min-height: 60px;
+  min-height: 58px;
   resize: vertical;
+}
+
+.am-inspector-section-header {
+  margin: 14px 0 10px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--vscode-panel-border, var(--am-border));
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--vscode-descriptionForeground, #333);
+}
+/* Appearance fields reuse .am-form-row (same label|control grid as the
+   Main tab's Name/Documentation) one field per row — a VS Code sidebar
+   is rarely wider than ~300px, too narrow for two labeled fields per row. */
+.am-appearance-form .am-form-row {
+  margin: 10px 0;
+}
+.am-control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 320px;
+}
+.am-control-group > .am-color-swatch {
+  /* input[type=color] has ~0 intrinsic content size, so a plain "flex: 1 1
+     auto" collapses it (auto basis falls back to that ~0 intrinsic width
+     before growing) — pin the basis to 0 so flex-grow does all the sizing. */
+  flex: 1 1 0%;
+  min-width: 0;
+}
+.am-control-group > input[type="number"] {
+  flex: 0 0 52px;
+  min-width: 0;
+}
+.am-color-swatch {
+  width: 100%;
+  max-width: 320px;
+  height: 20px;
+  padding: 1px;
+  border: 1px solid var(--vscode-input-border, var(--am-border));
+  border-radius: 3px;
+  background: var(--vscode-input-background, #f4f4f4);
+  cursor: pointer;
+  /* Guarantees the swatch boundary reads even when its chosen colour is
+     close to the panel background (e.g. a black/near-black override on a
+     dark theme, which otherwise all but disappears). */
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.35);
+}
+.am-color-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.am-color-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+.am-btn {
+  margin-top: 12px;
 }

@@ -393,7 +393,7 @@ class PaletteViewProvider implements vscode.WebviewViewProvider {
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <link rel="stylesheet" href="${styleUri}">
-<style>html,body{margin:0;height:100%;background:#fff;} #app{height:100vh;}</style>
+<style>html,body{margin:0;height:100%;background:var(--vscode-panel-background,#fff);color:var(--vscode-foreground,#222);} #app{height:100vh;}</style>
 </head>
 <body>
 <div id="app"></div>
@@ -409,8 +409,8 @@ class PaletteViewProvider implements vscode.WebviewViewProvider {
 // the canvas — same rationale and relay pattern as PaletteViewProvider
 // above: it's an isolated webview, so the extension host relays the
 // designer's current selection to it (archiSelectionChanged) and relays its
-// edits back (archiInspectorEdit / archiInspectorReroute, forwarded
-// verbatim via DesignerPanel.postInspectorMessage).
+// edits back (archiInspectorEdit / archiInspectorReroute / archiInspectorReset,
+// forwarded verbatim via DesignerPanel.postInspectorMessage).
 class InspectorViewProvider implements vscode.WebviewViewProvider {
   static current: InspectorViewProvider | undefined;
   private view: vscode.WebviewView | undefined;
@@ -431,7 +431,8 @@ class InspectorViewProvider implements vscode.WebviewViewProvider {
       if (
         msg &&
         (msg.type === "archiInspectorEdit" ||
-          msg.type === "archiInspectorReroute")
+          msg.type === "archiInspectorReroute" ||
+          msg.type === "archiInspectorReset")
       ) {
         DesignerPanel.postInspectorMessage(msg);
       }

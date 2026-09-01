@@ -2,6 +2,7 @@ import {
   LAYERS,
   ELEMENT_TYPES,
   RELATIONSHIP_TYPES,
+  LINE_WIDTH_PX,
   ArchimateModel,
   ArchimateElement,
   ArchimateRelationship,
@@ -39,16 +40,26 @@ function handlePosition(
 
 export function shapeElement(
   g: SVGGElement,
-  el: { w: number; h: number },
+  el: {
+    w: number; h: number;
+    fillColor?: string | null; fillOpacity?: number | null;
+    lineColor?: string | null; lineOpacity?: number | null;
+    lineWidth?: "thin" | "normal" | "thick" | null;
+    lineStyle?: "solid" | "dashed" | "dotted" | null;
+  },
   def: ElementTypeDef,
 ): void {
   const { w, h } = el;
-  const stroke = LAYERS[def.layer].stroke;
-  const fill = LAYERS[def.layer].color;
+  const stroke = el.lineColor || LAYERS[def.layer].stroke;
+  const fill = el.fillColor || LAYERS[def.layer].color;
   const common: SvgAttrs = {
     fill,
     stroke,
-    "stroke-width": 1.5,
+    "fill-opacity": el.fillOpacity != null ? el.fillOpacity / 255 : 1,
+    "stroke-opacity": el.lineOpacity != null ? el.lineOpacity / 255 : 1,
+    "stroke-width": el.lineWidth ? LINE_WIDTH_PX[el.lineWidth] : 1.5,
+    "stroke-dasharray":
+      el.lineStyle === "dashed" ? "7,4" : el.lineStyle === "dotted" ? "1.5,3.5" : "none",
     class: "am-shape",
   };
   switch (def.shape) {
@@ -163,9 +174,9 @@ export function shapeElement(
 // small top-right badge glyph indicating the element "family" (very small
 // simplified line-icons — not full ArchiMate iconography, but visually
 // distinct enough to tell layers/kinds apart at a glance).
-export function badgeGlyph(def: ElementTypeDef): SVGGElement {
+export function badgeGlyph(def: ElementTypeDef, iconColor?: string | null): SVGGElement {
   const s = svgEl("g", { class: "am-badge" });
-  const stroke = LAYERS[def.layer].stroke;
+  const stroke = iconColor || LAYERS[def.layer].stroke;
   const common: SvgAttrs = { fill: "none", stroke, "stroke-width": 1.3 };
   switch (def.badge) {
     case "actor":
@@ -408,7 +419,7 @@ export class Renderer {
     g.replaceChildren();
     shapeElement(g, el, def);
     if (def.badge) {
-      const badge = badgeGlyph(def);
+      const badge = badgeGlyph(def, el.iconColor);
       badge.setAttribute("transform", `translate(${el.w - 22},3) scale(1.4)`);
       g.appendChild(badge);
     }
@@ -421,6 +432,9 @@ export class Renderer {
     const div = document.createElement("div");
     div.className = "am-label";
     div.textContent = el.name;
+    if (el.fontColor) div.style.color = el.fontColor;
+    if (el.fontFamily) div.style.fontFamily = el.fontFamily;
+    if (el.fontSize) div.style.fontSize = `${el.fontSize}px`;
     fo.appendChild(div);
     g.appendChild(fo);
     const typeLabel = svgEl("text", {

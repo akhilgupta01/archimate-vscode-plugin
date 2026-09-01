@@ -7,7 +7,8 @@
 // Like the Palette, this is a separate, isolated webview from the designer
 // canvas, so it can't read the model directly: the extension host relays
 // `archiSelectionChanged` (designer -> here, what's selected right now) and
-// this view posts back `archiInspectorEdit` / `archiInspectorReroute` for
+// this view posts back `archiInspectorEdit` / `archiInspectorReroute` /
+// `archiInspectorReset` for
 // the designer to apply. See ArchimateDesigner's `hostApi` handling in
 // designer.ts (`_notifySelectionChanged`, `_applyInspectorEdit`,
 // `_applyInspectorReroute`).
@@ -29,6 +30,9 @@ function render(selection: Selection): void {
     },
     onReroute: (id) => {
       vscode.postMessage({ type: 'archiInspectorReroute', id });
+    },
+    onResetAppearance: (id) => {
+      vscode.postMessage({ type: 'archiInspectorReset', id });
     },
   });
 }
