@@ -362,6 +362,9 @@ class DesignerPanel {
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview.css"),
     );
+    const codiconUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "codicon.css"),
+    );
     const assetsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "dist", "assets"),
     );
@@ -377,7 +380,8 @@ class DesignerPanel {
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<link rel="stylesheet" href="${codiconUri}">
 <link rel="stylesheet" href="${styleUri}">
 <style>html,body{margin:0;height:100%;background:#fafafa;} #app{height:100vh;}</style>
 </head>
@@ -453,6 +457,9 @@ class PaletteViewProvider implements vscode.WebviewViewProvider {
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview.css"),
     );
+    const codiconUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "codicon.css"),
+    );
     const assetsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "dist", "assets"),
     );
@@ -461,7 +468,8 @@ class PaletteViewProvider implements vscode.WebviewViewProvider {
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<link rel="stylesheet" href="${codiconUri}">
 <link rel="stylesheet" href="${styleUri}">
 <style>html,body{margin:0;height:100%;background:var(--vscode-panel-background,#fff);color:var(--vscode-foreground,#222);} #app{height:100vh;}</style>
 </head>
@@ -542,12 +550,16 @@ class InspectorViewProvider implements vscode.WebviewViewProvider {
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview.css"),
     );
+    const codiconUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "codicon.css"),
+    );
     const nonce = getNonce();
     return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<link rel="stylesheet" href="${codiconUri}">
 <link rel="stylesheet" href="${styleUri}">
 <style>html,body{margin:0;height:100%;background:var(--vscode-panel-background,#fff);color:var(--vscode-foreground,#222);} #app{height:100vh;}</style>
 </head>
@@ -640,6 +652,9 @@ class ModelTreeViewProvider implements vscode.WebviewViewProvider {
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview.css"),
     );
+    const codiconUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "codicon.css"),
+    );
     const assetsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "dist", "assets"),
     );
@@ -648,7 +663,8 @@ class ModelTreeViewProvider implements vscode.WebviewViewProvider {
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<link rel="stylesheet" href="${codiconUri}">
 <link rel="stylesheet" href="${styleUri}">
 <style>html,body{margin:0;height:100%;background:var(--vscode-sideBar-background,#fff);color:var(--vscode-foreground,#222);} #app{height:100vh;}</style>
 </head>

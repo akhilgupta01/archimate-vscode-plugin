@@ -22,7 +22,7 @@ export const LAYERS: Record<LayerKey, Layer> = {
   other: { label: 'Other', color: '#E5E5E5', stroke: '#999999' },
 };
 
-export type ElementShape = 'rect' | 'rounded' | 'oval' | 'component' | 'box3d' | 'chevron' | 'wavyrect' | 'junction';
+export type ElementShape = 'rect' | 'rounded' | 'oval' | 'box3d' | 'chevron' | 'wavyrect' | 'junction';
 
 export interface ElementTypeDef {
   layer: LayerKey;
@@ -53,23 +53,23 @@ export const ELEMENT_TYPES = {
   BusinessRole: { layer: 'business', shape: 'rect', badge: 'role' },
   BusinessCollaboration: { layer: 'business', shape: 'rect', badge: 'collaboration' },
   BusinessInterface: { layer: 'business', shape: 'rect', badge: 'interface' },
-  BusinessProcess: { layer: 'business', shape: 'rect', badge: 'process' },
-  BusinessFunction: { layer: 'business', shape: 'rect', badge: 'function' },
-  BusinessInteraction: { layer: 'business', shape: 'rect', badge: 'interaction' },
-  BusinessEvent: { layer: 'business', shape: 'rect', badge: 'event' },
+  BusinessProcess: { layer: 'business', shape: 'rounded', badge: 'process' },
+  BusinessFunction: { layer: 'business', shape: 'rounded', badge: 'function' },
+  BusinessInteraction: { layer: 'business', shape: 'rounded', badge: 'interaction' },
+  BusinessEvent: { layer: 'business', shape: 'rounded', badge: 'event' },
   BusinessService: { layer: 'business', shape: 'rounded', badge: 'service' },
   BusinessObject: { layer: 'business', shape: 'rect', badge: 'object' },
   Contract: { layer: 'business', shape: 'rect', badge: 'contract' },
   Representation: { layer: 'business', shape: 'wavyrect', badge: 'representation' },
   Product: { layer: 'business', shape: 'rect', badge: 'product' },
   // Application
-  ApplicationComponent: { layer: 'application', shape: 'component', badge: 'component' },
+  ApplicationComponent: { layer: 'application', shape: 'rect', badge: 'component' },
   ApplicationCollaboration: { layer: 'application', shape: 'rect', badge: 'collaboration' },
   ApplicationInterface: { layer: 'application', shape: 'rect', badge: 'interface' },
-  ApplicationFunction: { layer: 'application', shape: 'rect', badge: 'function' },
-  ApplicationInteraction: { layer: 'application', shape: 'rect', badge: 'interaction' },
-  ApplicationProcess: { layer: 'application', shape: 'rect', badge: 'process' },
-  ApplicationEvent: { layer: 'application', shape: 'rect', badge: 'event' },
+  ApplicationFunction: { layer: 'application', shape: 'rounded', badge: 'function' },
+  ApplicationInteraction: { layer: 'application', shape: 'rounded', badge: 'interaction' },
+  ApplicationProcess: { layer: 'application', shape: 'rounded', badge: 'process' },
+  ApplicationEvent: { layer: 'application', shape: 'rounded', badge: 'event' },
   ApplicationService: { layer: 'application', shape: 'rounded', badge: 'service' },
   DataObject: { layer: 'application', shape: 'rect', badge: 'object' },
   // Technology
@@ -80,10 +80,10 @@ export const ELEMENT_TYPES = {
   TechnologyInterface: { layer: 'technology', shape: 'rect', badge: 'interface' },
   Path: { layer: 'technology', shape: 'rect', badge: 'path' },
   CommunicationNetwork: { layer: 'technology', shape: 'rect', badge: 'network' },
-  TechnologyFunction: { layer: 'technology', shape: 'rect', badge: 'function' },
-  TechnologyProcess: { layer: 'technology', shape: 'rect', badge: 'process' },
-  TechnologyInteraction: { layer: 'technology', shape: 'rect', badge: 'interaction' },
-  TechnologyEvent: { layer: 'technology', shape: 'rect', badge: 'event' },
+  TechnologyFunction: { layer: 'technology', shape: 'rounded', badge: 'function' },
+  TechnologyProcess: { layer: 'technology', shape: 'rounded', badge: 'process' },
+  TechnologyInteraction: { layer: 'technology', shape: 'rounded', badge: 'interaction' },
+  TechnologyEvent: { layer: 'technology', shape: 'rounded', badge: 'event' },
   TechnologyService: { layer: 'technology', shape: 'rounded', badge: 'service' },
   Artifact: { layer: 'technology', shape: 'rect', badge: 'artifact' },
   // Physical
@@ -94,7 +94,7 @@ export const ELEMENT_TYPES = {
   // Implementation & Migration
   WorkPackage: { layer: 'implementation', shape: 'rect', badge: 'workpackage' },
   Deliverable: { layer: 'implementation', shape: 'rect', badge: 'deliverable' },
-  ImplementationEvent: { layer: 'implementation', shape: 'rect', badge: 'event' },
+  ImplementationEvent: { layer: 'implementation', shape: 'rounded', badge: 'event' },
   Plateau: { layer: 'implementation', shape: 'rect', badge: 'plateau' },
   Gap: { layer: 'implementation', shape: 'rounded', badge: 'gap' },
   // Other / composite
@@ -165,11 +165,15 @@ export interface ArchimateElementProps {
   lineOpacity?: number | null;
   lineWidth?: LineWidth | null;
   lineStyle?: RelationshipStyle | null;
-  iconColor?: string | null;
   fontColor?: string | null;
   fontFamily?: string | null;
   fontSize?: number | null;
+  textAlign?: TextAlign | null;
+  verticalAlign?: VerticalAlign | null;
 }
+
+export type TextAlign = 'left' | 'center' | 'right';
+export type VerticalAlign = 'top' | 'middle' | 'bottom';
 
 export class ArchimateElement {
   id: string;
@@ -187,15 +191,17 @@ export class ArchimateElement {
   lineOpacity: number | null;
   lineWidth: LineWidth | null;
   lineStyle: RelationshipStyle | null;
-  iconColor: string | null;
   fontColor: string | null;
   fontFamily: string | null;
   fontSize: number | null;
+  textAlign: TextAlign | null;
+  verticalAlign: VerticalAlign | null;
 
   constructor({
     id, type, name, x = 0, y = 0, w = 140, h = 55, documentation = '', parentId = null,
     fillColor = null, fillOpacity = null, lineColor = null, lineOpacity = null,
-    lineWidth = null, lineStyle = null, iconColor = null, fontColor = null, fontFamily = null, fontSize = null,
+    lineWidth = null, lineStyle = null, fontColor = null, fontFamily = null, fontSize = null,
+    textAlign = null, verticalAlign = null,
   }: ArchimateElementProps) {
     if (!ELEMENT_TYPES[type]) throw new Error(`Unknown ArchiMate element type: ${type}`);
     this.id = id || nextId('elem');
@@ -213,10 +219,11 @@ export class ArchimateElement {
     this.lineOpacity = lineOpacity ?? null;
     this.lineWidth = lineWidth ?? null;
     this.lineStyle = lineStyle ?? null;
-    this.iconColor = iconColor ?? null;
     this.fontColor = fontColor ?? null;
     this.fontFamily = fontFamily ?? null;
     this.fontSize = fontSize ?? null;
+    this.textAlign = textAlign ?? null;
+    this.verticalAlign = verticalAlign ?? null;
   }
   get layer(): LayerKey { return ELEMENT_TYPES[this.type].layer as LayerKey; }
   bounds(): Bounds { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
@@ -254,26 +261,27 @@ export interface AppearanceSnapshot {
   lineOpacity: number | null;
   lineWidth: LineWidth | null;
   lineStyle: RelationshipStyle | null;
-  iconColor: string | null;
   fontColor: string | null;
   fontFamily: string | null;
   fontSize: number | null;
+  textAlign: TextAlign | null;
+  verticalAlign: VerticalAlign | null;
 }
 export function captureAppearance(el: ArchimateElement): AppearanceSnapshot {
   return {
     fillColor: el.fillColor, fillOpacity: el.fillOpacity,
     lineColor: el.lineColor, lineOpacity: el.lineOpacity,
     lineWidth: el.lineWidth, lineStyle: el.lineStyle,
-    iconColor: el.iconColor,
     fontColor: el.fontColor, fontFamily: el.fontFamily, fontSize: el.fontSize,
+    textAlign: el.textAlign, verticalAlign: el.verticalAlign,
   };
 }
 export function applyAppearance(el: ArchimateElement, snap: AppearanceSnapshot): void {
   el.fillColor = snap.fillColor; el.fillOpacity = snap.fillOpacity;
   el.lineColor = snap.lineColor; el.lineOpacity = snap.lineOpacity;
   el.lineWidth = snap.lineWidth; el.lineStyle = snap.lineStyle;
-  el.iconColor = snap.iconColor;
   el.fontColor = snap.fontColor; el.fontFamily = snap.fontFamily; el.fontSize = snap.fontSize;
+  el.textAlign = snap.textAlign; el.verticalAlign = snap.verticalAlign;
 }
 
 export interface ArchimateRelationshipProps {

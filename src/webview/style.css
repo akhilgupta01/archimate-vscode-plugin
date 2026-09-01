@@ -24,6 +24,9 @@
 .am-designer * {
   box-sizing: border-box;
 }
+.codicon {
+  vertical-align: middle;
+}
 
 .am-panel-header {
   display: flex;
@@ -91,14 +94,21 @@
   width: 10px;
   flex: 0 0 10px;
   text-align: center;
-  font-size: 9px;
   color: var(--vscode-descriptionForeground, var(--am-text-dim));
   cursor: pointer;
+}
+/* Matches .codicon[class*='codicon-']'s specificity so this wins the tie
+   (this stylesheet loads after codicon.css) instead of its 16px default. */
+.am-caret.codicon {
+  font-size: 12px;
 }
 .am-tree-icon {
   width: 14px;
   height: 14px;
   flex: 0 0 14px;
+}
+.am-tree-icon.codicon {
+  font-size: 14px;
 }
 .am-folder-row {
   cursor: pointer;
@@ -167,12 +177,15 @@
   background: transparent;
   color: var(--am-text-dim);
   cursor: pointer;
-  font-size: 15px;
   line-height: 1;
   padding: 0 3px;
   border-radius: 4px;
   visibility: hidden;
   flex: 0 0 auto;
+}
+.am-view-delete .codicon,
+.am-model-tree-add .codicon {
+  font-size: 14px;
 }
 .am-tree-row:hover .am-view-delete {
   visibility: visible;
@@ -240,6 +253,14 @@
 .am-btn-primary:hover {
   filter: brightness(1.08);
 }
+.am-btn.am-active {
+  background: var(--am-accent);
+  color: #fff;
+  border-color: var(--am-accent);
+}
+.am-btn.am-active:hover {
+  filter: brightness(1.08);
+}
 .am-zoom-label {
   width: 42px;
   text-align: center;
@@ -268,6 +289,9 @@
 .am-canvas-wrap.am-drop-target {
   outline: 2px dashed var(--am-accent);
   outline-offset: -2px;
+}
+.am-canvas-wrap.am-grid-hidden {
+  background-image: none;
 }
 .am-svg {
   width: 100%;
@@ -362,9 +386,11 @@
   background: transparent;
   cursor: pointer;
   color: var(--am-text-dim);
-  font-size: 13px;
   padding: 2px 4px;
   border-radius: 4px;
+}
+.am-collapse-btn .codicon {
+  font-size: 13px;
 }
 .am-collapse-btn:hover {
   background: #f2f4f8;
@@ -464,15 +490,19 @@
    MONOCHROME_ICON_TYPES) with no layer-colour fill to protect, unlike most
    element icons — so on a dark theme they can just be flipped to white for
    contrast instead of staying invisible black-on-near-black. VS Code
-   documents body.vscode-dark as the reliable way to detect theme kind
-   inside a webview; the media query is a fallback for contexts outside
-   VS Code (the dev-preview harness) where that class is never added. */
+   documents body.vscode-dark/vscode-light/vscode-high-contrast as the
+   reliable way to detect theme kind inside a webview, so those classes are
+   authoritative whenever present. The prefers-color-scheme media query is
+   only a fallback for contexts outside VS Code entirely (the dev-preview
+   harness), so it's scoped to bodies with none of those classes — otherwise
+   a light VS Code theme on a dark-mode OS would match the media query too
+   and invert these icons to invisible white-on-light. */
 body.vscode-dark .am-icon-mono .am-icon-img,
 body.vscode-high-contrast .am-icon-mono .am-icon-img {
   filter: invert(1);
 }
 @media (prefers-color-scheme: dark) {
-  .am-icon-mono .am-icon-img {
+  body:not(.vscode-light):not(.vscode-dark):not(.vscode-high-contrast):not(.vscode-high-contrast-light) .am-icon-mono .am-icon-img {
     filter: invert(1);
   }
 }

@@ -15,7 +15,7 @@ import { LayerKey, LAYERS, ModelElementRecord } from './model.js';
 import type { StorageAdapter, ModelTreeNode } from './storage/StorageAdapter.js';
 import { elementIcon } from './icons.js';
 import { PALETTE_GROUPS, humanize } from './paletteData.js';
-import { el } from './domUtil.js';
+import { el, codicon } from './domUtil.js';
 import { folderGlyph } from './viewsPanel.js';
 
 const FOLDER_ORDER: LayerKey[] = [...new Set(PALETTE_GROUPS.map(g => g.layer))];
@@ -101,8 +101,7 @@ export class ModelTreeController {
 
     const row = el('div', 'am-tree-row am-folder-row am-model-tree-folder', { 'data-folder-path': folderPath });
     row.style.paddingLeft = `${BASE_INDENT + depth * INDENT_PER_DEPTH}px`;
-    const caret = el('span', 'am-caret');
-    caret.textContent = expanded ? '▾' : '▸';
+    const caret = codicon(expanded ? 'chevron-down' : 'chevron-right', 'am-caret');
     row.appendChild(caret);
     row.appendChild(folderGlyph(expanded));
     const nameEl = el('span', 'am-tree-name');
@@ -110,12 +109,12 @@ export class ModelTreeController {
     nameEl.title = isLayerRoot ? 'Click to expand/collapse' : 'Click to expand/collapse · double-click to rename';
     row.appendChild(nameEl);
     const addBtn = el('button', 'am-view-delete am-model-tree-add', { title: 'New subfolder here' });
-    addBtn.textContent = '+';
+    addBtn.appendChild(codicon('add'));
     addBtn.addEventListener('click', (e) => { e.stopPropagation(); void this.createSubfolder(folderPath); });
     row.appendChild(addBtn);
     if (!isLayerRoot) {
       const delBtn = el('button', 'am-view-delete', { title: 'Delete folder (contents move up a level)' });
-      delBtn.textContent = '×';
+      delBtn.appendChild(codicon('close'));
       delBtn.addEventListener('click', (e) => { e.stopPropagation(); void this.deleteFolder(folderPath); });
       row.appendChild(delBtn);
     }

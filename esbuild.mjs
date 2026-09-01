@@ -69,6 +69,8 @@ const modelTreeViewConfig = {
 function copyAssets() {
   cpSync('src/webview/style.css', 'dist/webview.css');
   cpSync('src/webview/assets', 'dist/assets', { recursive: true });
+  cpSync('node_modules/@vscode/codicons/dist/codicon.css', 'dist/codicon.css');
+  cpSync('node_modules/@vscode/codicons/dist/codicon.ttf', 'dist/codicon.ttf');
 }
 
 if (watch) {

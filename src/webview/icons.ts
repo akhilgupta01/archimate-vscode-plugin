@@ -18,8 +18,17 @@ function assetBase(): string {
   return window.__ARCHI_ASSET_BASE__ || './assets';
 }
 
-function iconUrl(type: string): string {
+export function iconUrl(type: string): string {
   return `${assetBase()}/palette/${type}.png`;
+}
+
+// Same crops as iconUrl(), but with the layer-tinted fill stripped to
+// transparent (only the gray line-art remains) — used for the on-canvas
+// badge, which sits on top of the element's own (possibly overridden) fill
+// colour rather than the palette's neutral list background, so a baked-in
+// fill would clash instead of blending in.
+export function badgeUrl(type: string): string {
+  return `${assetBase()}/badges/${type}.png`;
 }
 
 function iconImg(type: string): HTMLImageElement {

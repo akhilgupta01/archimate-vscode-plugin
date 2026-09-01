@@ -10,7 +10,7 @@ import { buildPaletteDom } from './paletteView.js';
 import { ModelTreeController } from './modelTreeView.js';
 import { renderInspectorDom, INSPECTOR_EMPTY_HTML, Selection, isAppearanceField, AppearanceField } from './inspectorView.js';
 import { CanvasInteractions } from './canvasInteractions.js';
-import { el } from './domUtil.js';
+import { el, codicon } from './domUtil.js';
 import { SVG_NS } from './svgUtil.js';
 
 interface ContextMenuItem { label: string; action: () => void; disabled?: boolean; }
@@ -70,6 +70,8 @@ export class ArchimateDesigner {
   private zoomLabel!: HTMLSpanElement;
   private paletteScroll?: HTMLDivElement;
   private formatPainterBtn?: HTMLButtonElement;
+  private gridBtn?: HTMLButtonElement;
+  private showGrid = true;
   private modelTreePanel?: HTMLDivElement;
   private modelTreeController?: ModelTreeController;
 
@@ -87,6 +89,7 @@ export class ArchimateDesigner {
     this.onSave = opts.onSave || null;
     this.storageKey = opts.storageKey || 'archimate-designer';
     this.storage = opts.storage || new LocalStorageAdapter({ storageKey: this.storageKey });
+    this.showGrid = localStorage.getItem(`${this.storageKey}:show-grid`) !== 'false';
     this.hostApi = opts.hostApi ?? null;
     this.embeddedPalette = !this.hostApi;
 
@@ -133,6 +136,7 @@ export class ArchimateDesigner {
     main.appendChild(toolbar);
     main.appendChild(canvasWrap);
     this.canvasWrap = canvasWrap;
+    this.canvasWrap.classList.toggle('am-grid-hidden', !this.showGrid);
 
     // In hostApi mode both the palette and inspector live in their own VS
     // Code sidebar views (see paletteMain.ts / inspectorMain.ts), so there's
@@ -219,7 +223,7 @@ export class ArchimateDesigner {
     const header = el('div', 'am-panel-header');
     header.textContent = 'Palette';
     const collapseBtn = el('button', 'am-collapse-btn', { title: 'Collapse palette' });
-    collapseBtn.textContent = '▸';
+    collapseBtn.appendChild(codicon('chevron-right'));
     collapseBtn.addEventListener('click', () => this._setPaletteCollapsed(true));
     header.appendChild(collapseBtn);
     palette.appendChild(header);
@@ -272,16 +276,20 @@ export class ArchimateDesigner {
       : 'Select a tool from the Palette view, then click the canvas.';
     this.statusEl = status;
     const spacer = el('div', 'am-toolbar-spacer');
-    const zoomOut = el('button', 'am-btn', { title: 'Zoom out' }); zoomOut.textContent = '−';
+    const zoomOut = el('button', 'am-btn', { title: 'Zoom out' }); zoomOut.appendChild(codicon('zoom-out'));
     zoomOut.addEventListener('click', () => this.setZoom(this.zoom * 0.85));
     const zoomLabel = el('span', 'am-zoom-label'); zoomLabel.textContent = '100%';
     this.zoomLabel = zoomLabel;
-    const zoomIn = el('button', 'am-btn', { title: 'Zoom in' }); zoomIn.textContent = '+';
+    const zoomIn = el('button', 'am-btn', { title: 'Zoom in' }); zoomIn.appendChild(codicon('zoom-in'));
     zoomIn.addEventListener('click', () => this.setZoom(this.zoom * 1.15));
-    const zoomReset = el('button', 'am-btn', { title: 'Reset zoom' }); zoomReset.textContent = '⤢';
+    const zoomReset = el('button', 'am-btn', { title: 'Reset zoom' }); zoomReset.appendChild(codicon('refresh'));
     zoomReset.addEventListener('click', () => this.resetView());
+    const gridBtn = el('button', 'am-btn', { title: 'Toggle grid lines' }); gridBtn.appendChild(codicon('symbol-ruler'));
+    gridBtn.classList.toggle('am-active', this.showGrid);
+    gridBtn.addEventListener('click', () => this._toggleGrid());
+    this.gridBtn = gridBtn;
     const formatPainter = el('button', 'am-btn', { title: 'Format Painter: select an element, click this, then click another element to copy its Appearance (colours, line style, font) onto it' });
-    formatPainter.textContent = '🖌';
+    formatPainter.appendChild(codicon('paintcan'));
     formatPainter.addEventListener('click', () => this._toggleFormatPainter());
     this.formatPainterBtn = formatPainter;
     const del = el('button', 'am-btn', { title: 'Delete selected' }); del.textContent = 'Delete';
@@ -295,7 +303,14 @@ export class ArchimateDesigner {
     const importBtn = el('button', 'am-btn', { title: 'Import JSON file' }); importBtn.textContent = 'Import';
     importBtn.addEventListener('click', () => importInput.click());
 
-    toolbar.append(status, spacer, zoomOut, zoomLabel, zoomIn, zoomReset, formatPainter, del, importBtn, importInput, exportBtn, saveBtn);
+    toolbar.append(status, spacer, zoomOut, zoomLabel, zoomIn, zoomReset, gridBtn, formatPainter, del, importBtn, importInput, exportBtn, saveBtn);
+  }
+
+  private _toggleGrid(): void {
+    this.showGrid = !this.showGrid;
+    this.canvasWrap.classList.toggle('am-grid-hidden', !this.showGrid);
+    this.gridBtn?.classList.toggle('am-active', this.showGrid);
+    localStorage.setItem(`${this.storageKey}:show-grid`, String(this.showGrid));
   }
 
   private _buildInspector(): void {
@@ -519,8 +534,8 @@ export class ArchimateDesigner {
         fillColor: elModel.fillColor, fillOpacity: elModel.fillOpacity,
         lineColor: elModel.lineColor, lineOpacity: elModel.lineOpacity,
         lineWidth: elModel.lineWidth, lineStyle: elModel.lineStyle,
-        iconColor: elModel.iconColor,
         fontColor: elModel.fontColor, fontFamily: elModel.fontFamily, fontSize: elModel.fontSize,
+        textAlign: elModel.textAlign, verticalAlign: elModel.verticalAlign,
         defaultFillColor: layer.color, defaultLineColor: layer.stroke,
       };
     }
@@ -554,7 +569,6 @@ export class ArchimateDesigner {
     switch (field) {
       case 'fillColor': elModel.fillColor = value || null; break;
       case 'lineColor': elModel.lineColor = value || null; break;
-      case 'iconColor': elModel.iconColor = value || null; break;
       case 'fontColor': elModel.fontColor = value || null; break;
       case 'fontFamily': elModel.fontFamily = value || null; break;
       case 'fillOpacity': elModel.fillOpacity = value === '' ? null : Math.min(255, Math.max(0, Number(value))); break;
@@ -562,6 +576,8 @@ export class ArchimateDesigner {
       case 'fontSize': elModel.fontSize = value === '' ? null : Math.max(6, Number(value)); break;
       case 'lineWidth': elModel.lineWidth = (value || null) as ArchimateElement['lineWidth']; break;
       case 'lineStyle': elModel.lineStyle = (value || null) as ArchimateElement['lineStyle']; break;
+      case 'textAlign': elModel.textAlign = (value || null) as ArchimateElement['textAlign']; break;
+      case 'verticalAlign': elModel.verticalAlign = (value || null) as ArchimateElement['verticalAlign']; break;
     }
     this.renderer.updateElementGeometry(elModel);
   }
@@ -575,10 +591,11 @@ export class ArchimateDesigner {
     elModel.lineOpacity = null;
     elModel.lineWidth = null;
     elModel.lineStyle = null;
-    elModel.iconColor = null;
     elModel.fontColor = null;
     elModel.fontFamily = null;
     elModel.fontSize = null;
+    elModel.textAlign = null;
+    elModel.verticalAlign = null;
     this.renderer.updateElementGeometry(elModel);
     // Several fields changed at once, so re-render the whole panel (like a
     // fresh selection) rather than trying to patch each control in place.

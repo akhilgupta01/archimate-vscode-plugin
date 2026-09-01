@@ -12,6 +12,7 @@ import {
 import { OrthogonalRouter, labelPosition } from "./router.js";
 import { buildDefs } from "./markers.js";
 import { svgEl, SvgAttrs } from "./svgUtil.js";
+import { badgeUrl } from "./icons.js";
 import { ResizeHandle, Guide } from "./snap.js";
 
 function pointsToPath(pts: Point[]): string {
@@ -89,25 +90,6 @@ export function shapeElement(
       );
       break;
     }
-    case "component": {
-      g.appendChild(
-        svgEl("rect", { x: 0, y: 0, width: w, height: h, ...common }),
-      );
-      for (const ty of [h * 0.22, h * 0.62]) {
-        g.appendChild(
-          svgEl("rect", {
-            x: -8,
-            y: ty,
-            width: 16,
-            height: 10,
-            fill,
-            stroke,
-            "stroke-width": 1.3,
-          }),
-        );
-      }
-      break;
-    }
     case "box3d": {
       const d = 10;
       g.appendChild(
@@ -171,109 +153,21 @@ export function shapeElement(
   }
 }
 
-// small top-right badge glyph indicating the element "family" (very small
-// simplified line-icons — not full ArchiMate iconography, but visually
-// distinct enough to tell layers/kinds apart at a glance).
-export function badgeGlyph(def: ElementTypeDef, iconColor?: string | null): SVGGElement {
-  const s = svgEl("g", { class: "am-badge" });
-  const stroke = iconColor || LAYERS[def.layer].stroke;
-  const common: SvgAttrs = { fill: "none", stroke, "stroke-width": 1.3 };
-  switch (def.badge) {
-    case "actor":
-      s.appendChild(svgEl("circle", { cx: 7, cy: 3, r: 2.4, ...common }));
-      s.appendChild(
-        svgEl("path", {
-          d: "M7,5.6 L7,11 M3.5,8 L10.5,8 M7,11 L4,15 M7,11 L10,15",
-          ...common,
-        }),
-      );
-      break;
-    case "process":
-      s.appendChild(
-        svgEl("path", { d: "M1,7 L11,7 M8,3.5 L12,7 L8,10.5", ...common }),
-      );
-      break;
-    case "function":
-      s.appendChild(
-        svgEl("path", { d: "M3,2 L11,2 L11,11 L7,8 L3,11 Z", ...common }),
-      );
-      break;
-    case "collaboration":
-      s.appendChild(svgEl("circle", { cx: 5, cy: 7, r: 4, ...common }));
-      s.appendChild(svgEl("circle", { cx: 9, cy: 7, r: 4, ...common }));
-      break;
-    case "interaction":
-      s.appendChild(svgEl("path", { d: "M7,2 A5,5 0 0,0 7,12 Z", ...common }));
-      s.appendChild(svgEl("path", { d: "M7,2 A5,5 0 0,1 7,12 Z", ...common }));
-      break;
-    case "component":
-      s.appendChild(
-        svgEl("rect", { x: 4, y: 2, width: 9, height: 10, ...common }),
-      );
-      s.appendChild(
-        svgEl("rect", { x: 1.5, y: 4, width: 3.5, height: 2, ...common }),
-      );
-      s.appendChild(
-        svgEl("rect", { x: 1.5, y: 8, width: 3.5, height: 2, ...common }),
-      );
-      break;
-    case "service":
-      s.appendChild(
-        svgEl("rect", { x: 1, y: 3, width: 12, height: 8, rx: 4, ...common }),
-      );
-      break;
-    case "interface":
-      s.appendChild(svgEl("circle", { cx: 4, cy: 7, r: 3, ...common }));
-      s.appendChild(svgEl("path", { d: "M7,7 L13,7", ...common }));
-      break;
-    case "object":
-    case "artifact":
-      s.appendChild(
-        svgEl("rect", { x: 1, y: 1, width: 12, height: 12, ...common }),
-      );
-      s.appendChild(svgEl("path", { d: "M1,5 L13,5", ...common }));
-      break;
-    case "event":
-      s.appendChild(
-        svgEl("path", { d: "M1,3 L8,3 L13,7 L8,11 L1,11 Z", ...common }),
-      );
-      break;
-    case "goal":
-      s.appendChild(svgEl("circle", { cx: 7, cy: 7, r: 6, ...common }));
-      s.appendChild(svgEl("circle", { cx: 7, cy: 7, r: 3, ...common }));
-      break;
-    case "requirement":
-    case "principle":
-    case "constraint":
-      s.appendChild(svgEl("path", { d: "M2,12 L2,3 L12,3 L12,12", ...common }));
-      s.appendChild(
-        svgEl("path", { d: "M2,12 L12,12", stroke, "stroke-width": 2.2 }),
-      );
-      break;
-    case "value":
-    case "outcome":
-    case "meaning":
-      s.appendChild(svgEl("path", { d: "M7,1 L12,13 L1,13 Z", ...common }));
-      break;
-    case "capability":
-    case "resource":
-    case "course":
-      s.appendChild(svgEl("circle", { cx: 7, cy: 7, r: 6, ...common }));
-      s.appendChild(svgEl("path", { d: "M4,7 L10,7 M7,4 L7,10", ...common }));
-      break;
-    case "node":
-    case "device":
-    case "system":
-    case "equipment":
-    case "facility":
-      s.appendChild(
-        svgEl("path", { d: "M1,4 L5,1 L13,1 L13,9 L9,12 L1,12 Z", ...common }),
-      );
-      break;
-    default:
-      s.appendChild(svgEl("circle", { cx: 7, cy: 7, r: 6, ...common }));
-  }
-  return s;
+// Small top-right badge on each element: the same line-art shown for this
+// exact type in the Palette (see icons.ts), so canvas and palette always
+// agree on what an element's icon looks like — not a per-family
+// approximation like the hand-drawn SVG glyphs this replaced. Uses the
+// transparent-fill variant (badgeUrl, not iconUrl) so the badge sits on top
+// of the element's own — possibly overridden — fill colour instead of a
+// baked-in one; not recolorable beyond that (the gray line art is fixed).
+const BADGE_SIZE = 16;
+export function badgeGlyph(type: string): SVGImageElement {
+  return svgEl("image", {
+    class: "am-badge",
+    href: badgeUrl(type),
+    width: BADGE_SIZE,
+    height: BADGE_SIZE,
+  });
 }
 
 export type ElementPointerHandler = (e: PointerEvent, id: string) => void;
@@ -419,8 +313,9 @@ export class Renderer {
     g.replaceChildren();
     shapeElement(g, el, def);
     if (def.badge) {
-      const badge = badgeGlyph(def, el.iconColor);
-      badge.setAttribute("transform", `translate(${el.w - 22},3) scale(1.4)`);
+      const badge = badgeGlyph(el.type);
+      badge.setAttribute("x", String(el.w - BADGE_SIZE - 4));
+      badge.setAttribute("y", "3");
       g.appendChild(badge);
     }
     const fo = svgEl("foreignObject", {
@@ -435,6 +330,21 @@ export class Renderer {
     if (el.fontColor) div.style.color = el.fontColor;
     if (el.fontFamily) div.style.fontFamily = el.fontFamily;
     if (el.fontSize) div.style.fontSize = `${el.fontSize}px`;
+    if (el.textAlign) {
+      // .am-label is a row-direction flex container: justify-content is the
+      // horizontal (main) axis, so it positions the text box left/center/right;
+      // text-align then aligns wrapped lines within that box the same way.
+      div.style.textAlign = el.textAlign;
+      div.style.justifyContent =
+        el.textAlign === "left" ? "flex-start" :
+        el.textAlign === "right" ? "flex-end" : "center";
+    }
+    if (el.verticalAlign) {
+      // align-items is the cross (vertical) axis in a row-direction flex container.
+      div.style.alignItems =
+        el.verticalAlign === "top" ? "flex-start" :
+        el.verticalAlign === "bottom" ? "flex-end" : "center";
+    }
     fo.appendChild(div);
     g.appendChild(fo);
     const typeLabel = svgEl("text", {

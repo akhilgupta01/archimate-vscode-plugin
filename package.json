@@ -2,7 +2,7 @@
   "name": "archimate-diagrams",
   "displayName": "ArchiMate Diagrams",
   "description": "Design ArchiMate diagrams — with automatic orthogonal connector routing, drag-to-reposition, resize, alignment guides, and multi-select — right inside VS Code.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "local-dev",
   "license": "MIT",
   "engines": {
@@ -58,7 +58,7 @@
       "panel": [
         {
           "id": "archimateInspectorPanel",
-          "title": "Inspector",
+          "title": "Properties",
           "icon": "media/inspector-icon.svg"
         }
       ]
@@ -82,7 +82,7 @@
         {
           "type": "webview",
           "id": "archimate.inspectorView",
-          "name": "Inspector"
+          "name": "Properties"
         }
       ]
     },
@@ -124,5 +124,8 @@
     "esbuild": "^0.28.2",
     "typescript": "^5.4.0",
     "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.46-24"
   }
 }

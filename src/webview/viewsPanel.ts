@@ -8,8 +8,7 @@
 import { ArchimateModel, ModelJSON } from './model.js';
 import type { Renderer } from './renderer.js';
 import type { StorageAdapter, TreeEntry, ViewData } from './storage/StorageAdapter.js';
-import { el } from './domUtil.js';
-import { svgEl } from './svgUtil.js';
+import { el, codicon } from './domUtil.js';
 
 type DropTarget = { type: 'folder'; path: string } | { type: 'root' };
 
@@ -40,25 +39,12 @@ function fmtTime(ts: number): string {
 }
 
 // Exported so modelTreeView.ts can render its own layer folders with the
-// exact same yellow folder icon, rather than duplicating the SVG.
-export function folderGlyph(open: boolean): SVGElement {
-  const svg = svgEl('svg', { viewBox: '0 0 14 14', class: 'am-tree-icon' });
-  const common = { fill: '#dcb35c', stroke: '#a3792f', 'stroke-width': 1, 'stroke-linejoin': 'round' };
-  if (open) {
-    svg.appendChild(svgEl('path', { d: 'M1,4 L1,11.5 L12.5,11.5 L13.5,5.5 L4,5.5 L3,4 Z', ...common }));
-    svg.appendChild(svgEl('path', { d: 'M1,4 L5,4 L6,2.5 L11.5,2.5 L11.5,5.5', fill: 'none', stroke: '#a3792f', 'stroke-width': 1 }));
-  } else {
-    svg.appendChild(svgEl('path', { d: 'M1,3.5 L5.5,3.5 L6.5,5 L13,5 L13,11.5 L1,11.5 Z', ...common }));
-  }
-  return svg;
+// exact same codicon, rather than duplicating it.
+export function folderGlyph(open: boolean): HTMLSpanElement {
+  return codicon(open ? 'folder-opened' : 'folder', 'am-tree-icon');
 }
-function fileGlyph(): SVGElement {
-  const svg = svgEl('svg', { viewBox: '0 0 14 14', class: 'am-tree-icon' });
-  svg.appendChild(svgEl('path', { d: 'M2.5,1.5 L8,1.5 L11.5,5 L11.5,12.5 L2.5,12.5 Z', fill: '#eef2fb', stroke: '#7b8aa6', 'stroke-width': 1, 'stroke-linejoin': 'round' }));
-  svg.appendChild(svgEl('path', { d: 'M8,1.5 L8,5 L11.5,5', fill: 'none', stroke: '#7b8aa6', 'stroke-width': 1 }));
-  svg.appendChild(svgEl('line', { x1: 4.3, y1: 7.3, x2: 9.7, y2: 7.3, stroke: '#7b8aa6', 'stroke-width': 1 }));
-  svg.appendChild(svgEl('line', { x1: 4.3, y1: 9.4, x2: 9.7, y2: 9.4, stroke: '#7b8aa6', 'stroke-width': 1 }));
-  return svg;
+function fileGlyph(): HTMLSpanElement {
+  return codicon('file', 'am-tree-icon');
 }
 
 export class ViewsPanel {
@@ -83,10 +69,10 @@ export class ViewsPanel {
     const header = el('div', 'am-panel-header');
     header.textContent = 'Views';
     const newFolderBtn = el('button', 'am-btn am-btn-sm', { title: 'New folder' });
-    newFolderBtn.textContent = '+ Folder';
+    newFolderBtn.append(codicon('new-folder'), ' Folder');
     newFolderBtn.addEventListener('click', () => this.createFolder());
     const newViewBtn = el('button', 'am-btn am-btn-sm', { title: 'Start a new blank view' });
-    newViewBtn.textContent = '+ View';
+    newViewBtn.append(codicon('new-file'), ' View');
     newViewBtn.addEventListener('click', () => this.newView());
     header.append(newFolderBtn, newViewBtn);
     this.list = el('div', 'am-views-list');
@@ -217,14 +203,13 @@ export class ViewsPanel {
     const expanded = this._loadExpanded().has(folder.path);
     const row = el('div', 'am-tree-row am-folder-row', { 'data-folder-path': folder.path });
     row.style.paddingLeft = `${6 + depth * 15}px`;
-    const caret = el('span', 'am-caret');
-    caret.textContent = expanded ? '▾' : '▸';
+    const caret = codicon(expanded ? 'chevron-down' : 'chevron-right', 'am-caret');
     const icon = folderGlyph(expanded);
     const nameEl = el('span', 'am-tree-name');
     nameEl.textContent = folder.name;
     nameEl.title = 'Click to expand/collapse · double-click to rename';
     const delBtn = el('button', 'am-view-delete', { title: 'Delete folder (contents move up a level)' });
-    delBtn.textContent = '×';
+    delBtn.appendChild(codicon('close'));
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); this.deleteFolder(folder.path); });
     row.append(caret, icon, nameEl, delBtn);
 
@@ -261,7 +246,7 @@ export class ViewsPanel {
     const metaEl = el('span', 'am-view-meta');
     metaEl.textContent = v.updatedAt ? fmtTime(v.updatedAt) : '';
     const delBtn = el('button', 'am-view-delete', { title: 'Delete view' });
-    delBtn.textContent = '×';
+    delBtn.appendChild(codicon('close'));
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); this.deleteView(v.path); });
     // Debounce single-click so a double-click isn't preceded by a loadView()
     // that rebuilds this list and destroys the in-progress rename input.

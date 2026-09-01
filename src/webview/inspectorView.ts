@@ -16,10 +16,11 @@ export const APPEARANCE_FIELDS = [
   "lineOpacity",
   "lineWidth",
   "lineStyle",
-  "iconColor",
   "fontColor",
   "fontFamily",
   "fontSize",
+  "textAlign",
+  "verticalAlign",
 ] as const;
 export type AppearanceField = (typeof APPEARANCE_FIELDS)[number];
 const APPEARANCE_FIELD_SET: ReadonlySet<string> = new Set(APPEARANCE_FIELDS);
@@ -34,10 +35,11 @@ export interface ElementAppearance {
   lineOpacity: number | null;
   lineWidth: "thin" | "normal" | "thick" | null;
   lineStyle: "solid" | "dashed" | "dotted" | null;
-  iconColor: string | null;
   fontColor: string | null;
   fontFamily: string | null;
   fontSize: number | null;
+  textAlign: "left" | "center" | "right" | null;
+  verticalAlign: "top" | "middle" | "bottom" | null;
   /** Layer defaults, shown as the swatch/placeholder when there's no override. */
   defaultFillColor: string;
   defaultLineColor: string;
@@ -194,7 +196,6 @@ function renderAppearanceSection(
     [["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]],
     sel.lineStyle, "solid", (v) => cb.onEdit(sel.id, "lineStyle", v, true),
   ));
-  fieldRow(form, "Icon Colour", colorControl(sel.iconColor, sel.defaultLineColor, (v) => cb.onEdit(sel.id, "iconColor", v, true)));
   fieldRow(form, "Font Colour", colorControl(sel.fontColor, "#222222", (v) => cb.onEdit(sel.id, "fontColor", v, true)));
   fieldRow(form, "Font", selectControl(
     FONT_FAMILIES.map((f) => [f === "Inherit" ? "" : f, f]),
@@ -207,6 +208,14 @@ function renderAppearanceSection(
   fontSizeInput.value = String(sel.fontSize ?? 12);
   fontSizeInput.addEventListener("change", () => cb.onEdit(sel.id, "fontSize", fontSizeInput.value, true));
   fieldRow(form, "Font Size", fontSizeInput);
+  fieldRow(form, "Text Align", selectControl(
+    [["left", "Left"], ["center", "Center"], ["right", "Right"]],
+    sel.textAlign, "center", (v) => cb.onEdit(sel.id, "textAlign", v, true),
+  ));
+  fieldRow(form, "Vertical Align", selectControl(
+    [["top", "Top"], ["middle", "Middle"], ["bottom", "Bottom"]],
+    sel.verticalAlign, "middle", (v) => cb.onEdit(sel.id, "verticalAlign", v, true),
+  ));
 
   const resetBtn = el("button", "am-btn");
   resetBtn.type = "button";
