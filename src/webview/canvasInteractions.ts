@@ -199,9 +199,12 @@ export class CanvasInteractions {
     const neededBottom = targetY + child.h + PAD;
     if (neededRight > parent.x + parent.w) parent.w = neededRight - parent.x;
     if (neededBottom > parent.y + parent.h) parent.h = neededBottom - parent.y;
+    // Set before repainting the parent below — its label auto-moves to
+    // top-center as soon as it has any children (see renderer.ts's
+    // _paintElement), which getChildren() can only see once this is set.
+    child.parentId = parent.id;
     host.renderer.updateElementGeometry(parent);
     host.renderer.rerouteConnected(parent.id);
-    child.parentId = parent.id;
     this.moveSubtree(child.id, targetX - child.x, targetY - child.y);
     host.renderer.reorderByContainment();
   }
@@ -225,7 +228,12 @@ export class CanvasInteractions {
         const oldParent = model.getElement(elObj.parentId);
         const stillInside = !!oldParent && elObj.x >= oldParent.x && elObj.x + elObj.w <= oldParent.x + oldParent.w &&
           elObj.y >= oldParent.y && elObj.y + elObj.h <= oldParent.y + oldParent.h;
-        if (!stillInside) elObj.parentId = null;
+        if (!stillInside) {
+          elObj.parentId = null;
+          // Repaint the old container in case that was its last child —
+          // its label auto-recenters once it's no longer host to anything.
+          if (oldParent) this.host.renderer.updateElementGeometry(oldParent);
+        }
       }
     }
     for (const { parent, child } of pendingPairs) this.nestChild(parent, child);

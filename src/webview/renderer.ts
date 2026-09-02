@@ -359,6 +359,15 @@ export class Renderer {
       div.style.alignItems =
         el.verticalAlign === "top" ? "flex-start" :
         el.verticalAlign === "bottom" ? "flex-end" : "center";
+    } else if (this.model.getChildren(el.id).length > 0) {
+      // No explicit override, but this box has something nested inside it —
+      // pin its own label to the top like a container header instead of
+      // the default vertical-center, so it doesn't sit underneath (or on
+      // top of) whatever's nested there. Purely a rendering default: it
+      // doesn't touch el.verticalAlign, so it steps aside the moment the
+      // user picks an explicit alignment in the Appearance tab, and
+      // reverts on its own if every child is later removed.
+      div.style.alignItems = "flex-start";
     }
     fo.appendChild(div);
     g.appendChild(fo);

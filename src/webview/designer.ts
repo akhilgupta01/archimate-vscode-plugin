@@ -825,12 +825,25 @@ export class ArchimateDesigner {
 
   deleteSelected(): void {
     if (!this.selected.size) return;
+    // Deleting a container's last child should un-stick that container's
+    // label from the top-center spot it auto-moved to while it had one
+    // (see renderer.ts's _paintElement) — capture parents before removal,
+    // repaint whichever ones are still around afterward.
+    const formerParentIds = new Set(
+      [...this.selected]
+        .map(id => this.model.getElement(id)?.parentId)
+        .filter((id): id is string => !!id),
+    );
     for (const id of this.selected) {
       if (this.model.elements.has(id)) { this.model.removeElement(id); this.renderer.removeElementDom(id); }
       if (this.model.relationships.has(id)) { this.model.removeRelationship(id); this.renderer.removeEdgeDom(id); }
     }
     for (const [id] of [...this.renderer.edgeDom]) {
       if (!this.model.relationships.has(id)) this.renderer.removeEdgeDom(id);
+    }
+    for (const parentId of formerParentIds) {
+      const parent = this.model.getElement(parentId);
+      if (parent) this.renderer.updateElementGeometry(parent);
     }
     this._setSelection(new Set());
     this.renderer.rerouteAll();
